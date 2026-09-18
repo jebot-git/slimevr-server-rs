@@ -61,10 +61,10 @@ dependency chain: nothing above an item can be finished without the items below 
 - [~] Parity testing against the Java server — `examples/solarxr_dump` +
       `examples/tracker_emulate` built; **end-to-end live test succeeded** (Rust
       server swapped in for the Java server, 6 live trackers connected, skeleton
-      streamed over SolarXR). Found & fixed: ktmath `(w,x,y,z)` frame-alignment
-      bug and a 10s ping interval exceeding shora's 5s tracker timeout. Remaining:
-      1. autobone bone lengths, 2. `skeletal_model` lacks UPPER_CHEST/SHOULDERS/
-      HIPs/HEAD, 3. ankle→foot vs lower-leg designation differs from the Java
-      config.
+      streamed over SolarXR). Fixed: ktmath `(w,x,y,z)` frame-alignment bug, a 10s
+      ping interval exceeding shora's 5s tracker timeout, skeleton structure now
+      matches Java (`UpperChest`/`ShoulderL/R`/`HipL/R`), and the HaritoraX 2 ankle
+      tracker maps to the shin (`LOWER_LEG`) not the foot. Remaining: autobone
+      bone lengths + `HEAD`/fingers bones.
 - [ ] Remove the vendored `solarxr_protocol` in favour of the upstream git dep once
       the version is pinned.
