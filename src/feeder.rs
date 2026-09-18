@@ -99,3 +99,39 @@ async fn read_message<R: AsyncRead + Unpin>(r: &mut R) -> io::Result<Option<Vec<
 // future writes; only reads are needed today).
 #[allow(unused_imports)]
 use AsyncWrite as _;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proto::Position;
+
+    #[test]
+    fn position_round_trips() {
+        let msg = ProtobufMessage {
+            message: Some(protobuf_message::Message::Position(Position {
+                tracker_id: 0,
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+                qx: 0.0,
+                qy: 0.0,
+                qz: 0.0,
+                qw: 1.0,
+                data_source: 0,
+                vx: 0.0,
+                vy: 0.0,
+                vz: 0.0,
+            })),
+        };
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = ProtobufMessage::decode(buf.as_slice()).unwrap();
+        match decoded.message {
+            Some(protobuf_message::Message::Position(p)) => {
+                assert_eq!(p.tracker_id, 0);
+                assert_eq!((p.x, p.y, p.z), (1.0, 2.0, 3.0));
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+}
