@@ -1,0 +1,32 @@
+[package]
+name = "slimevr-server-rs"
+version = "0.1.0"
+edition = "2021"
+description = "A from-scratch Rust rewrite of the SlimeVR full-body tracking server"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# ── SlimeVR-Rust boilerplate (the whole point of this project) ────────────────
+# firmware_protocol: the "Hey OVR =D 5" tracker UDP protocol (serverbound side).
+firmware_protocol = { git = "https://github.com/SlimeVR/SlimeVR-Rust", rev = "6d25f871f9fb4b2f52e2913ce35a2c771385a6a9" }
+# skeletal_model: the human skeleton graph + (unfinished) FK solver.
+skeletal_model = { git = "https://github.com/SlimeVR/SlimeVR-Rust", rev = "6d25f871f9fb4b2f52e2913ce35a2c771385a6a9" }
+# vqf: the VQF IMU orientation filter (for server-side fusion / drift correction).
+vqf = { git = "https://github.com/SlimeVR/SlimeVR-Rust", rev = "6d25f871f9fb4b2f52e2913ce35a2c771385a6a9" }
+
+# ── SolarXR output (WiVRn-facing) ─────────────────────────────────────────────
+# Vendored SolarXR protocol FlatBuffers bindings (same version shora uses with WiVRn).
+solarxr_protocol = { path = "vendor/solarxr-protocol" }
+flatbuffers = "22.10.26"
+
+# ── async + networking ────────────────────────────────────────────────────────
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
+# ── misc ──────────────────────────────────────────────────────────────────────
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# nalgebra 0.32 to interoperate with `vqf`'s quaternion/vector types.
+nalgebra = "0.32"
