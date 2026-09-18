@@ -13,6 +13,7 @@ mod config;
 mod feeder;
 mod reset;
 mod skeleton;
+mod smoothing;
 mod solarxr;
 mod tracker;
 
@@ -81,14 +82,21 @@ async fn main() -> anyhow::Result<()> {
     let _feeder_task = tokio::spawn(feeder::run(config.feeder_socket.clone(), hmd.clone()));
 
     // 4. Pose estimation loop: tracker rotations → skeleton pose.
+    let mut smoother = smoothing::Smoother::new(config.smoothing);
     let mut tick = tokio::time::interval(Duration::from_millis(33)); // ~30 Hz
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tick.tick().await;
 
-        let trackers: Vec<_> = registry.read().unwrap().iter().cloned().collect();
+        let mut trackers: Vec<_> = registry.read().unwrap().iter().cloned().collect();
         if !trackers.is_empty() {
             tracing::trace!("trackers: {}", trackers.len());
+        }
+        // Smooth each tracker's raw rotation before the skeleton solve.
+        for t in &mut trackers {
+            if let Some(rot) = t.rotation {
+                t.rotation = Some(smoother.apply(t.mac, rot));
+            }
         }
         let new_pose = {
             let calib = calib.read().unwrap();
