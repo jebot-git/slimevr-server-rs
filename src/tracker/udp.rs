@@ -45,7 +45,7 @@ pub async fn run(
 
         if let Some(tag) = read_tag(data) {
             if tag == TAG_SENSOR_INFO {
-                handle_sensor_info_raw(data, src, &registry);
+                handle_sensor_info_raw(data, src, &registry, &calib);
                 continue;
             }
         }
@@ -117,6 +117,7 @@ fn handle_sensor_info_raw(
     buf: &[u8],
     src: SocketAddr,
     registry: &Arc<RwLock<TrackerRegistry>>,
+    calib: &Arc<RwLock<Calibration>>,
 ) {
     // payload starts after the 12-byte header.
     if buf.len() < 19 {
@@ -126,10 +127,14 @@ fn handle_sensor_info_raw(
     // buf[13] = status, buf[14] = type, buf[15..17] = mag config,
     // buf[17] = hasCompletedRestCalibration, buf[18] = tracker_position.
     let position = buf[18];
-    registry
+    let mac = registry
         .write()
         .unwrap()
         .update_sensor_info(src, sensor_id, position);
+    // Frame alignment: set the mounting orientation from the tracker's body part.
+    if let Some(mac) = mac {
+        calib.write().unwrap().set_mounting(mac, position);
+    }
 }
 
 /// Respond to a handshake with the `"Hey OVR =D 5"` magic.

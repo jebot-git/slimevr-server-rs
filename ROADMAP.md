@@ -34,9 +34,9 @@ dependency chain: nothing above an item can be finished without the items below 
       (simplified: latest-drift only, no multi-reset weighted average yet).
 - [ ] **Calibration refinements.** Per-arm skip-pose/T-pose modes, HMD
       special-casing, and yaw-reset smoothing are not ported.
-- [ ] **Frame alignment.** `mounting_orientation` is identity; the SlimeVR
-      `HalfHorizontal` / `defaultMounting()` per-body-part conventions (sensor ↔
-      skeletal_model sign alignment) are not yet applied.
+- [x] **Frame alignment.** Ported the ktmath `Quaternion.SLIMEVR` mounting
+      orientations (`FRONT`/`LEFT`/`RIGHT`/`FRONT_LEFT`/`FRONT_RIGHT`) via
+      `default_mounting(position)`, applied as `mounting_orientation` on SENSOR_INFO.
 - [ ] **Bone lengths / proportions.** Real user proportions (autobone / height).
       Approximate adult defaults are in place.
 - [ ] **Smoothing / prediction.** Port the Java server's filtering and pose smoothing.

@@ -69,17 +69,22 @@ impl TrackerRegistry {
         self.by_mac.get_mut(&mac)
     }
 
-    /// Update sensor id + position from a SENSOR_INFO packet.
-    pub fn update_sensor_info(&mut self, addr: SocketAddr, sensor_id: u8, position: u8) {
+    /// Update sensor id + position from a SENSOR_INFO packet. Returns the tracker's MAC.
+    pub fn update_sensor_info(
+        &mut self,
+        addr: SocketAddr,
+        sensor_id: u8,
+        position: u8,
+    ) -> Option<[u8; 6]> {
         // Re-key the socket map from the default sensor id 0 to the reported id.
-        if let Some(mac) = self.by_socket.remove(&(addr, 0)) {
-            self.by_socket.insert((addr, sensor_id), mac);
-            if let Some(t) = self.by_mac.get_mut(&mac) {
-                t.sensor_id = sensor_id;
-                t.position = position;
-                t.last_seen = Instant::now();
-            }
+        let mac = self.by_socket.remove(&(addr, 0))?;
+        self.by_socket.insert((addr, sensor_id), mac);
+        if let Some(t) = self.by_mac.get_mut(&mac) {
+            t.sensor_id = sensor_id;
+            t.position = position;
+            t.last_seen = Instant::now();
         }
+        Some(mac)
     }
 
     /// Update a tracker's rotation.
