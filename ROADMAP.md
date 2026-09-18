@@ -4,7 +4,7 @@ The Java SlimeVR server is roughly 12k lines of battle-tested Kotlin. This docum
 tracks what the Rust rewrite has and what remains. Items are ordered roughly by the
 dependency chain: nothing above an item can be finished without the items below it.
 
-## Done (first milestone)
+## Done
 
 - [x] Project scaffold with SlimeVR-Rust git deps (`firmware_protocol`, `skeletal_model`, `vqf`).
 - [x] Tracker UDP protocol server (`tracker/udp.rs`): handshake → `"Hey OVR =D 5"`,
@@ -14,20 +14,22 @@ dependency chain: nothing above an item can be finished without the items below 
 - [x] Passthrough pose estimation: `TrackerPosition` → SolarXR `BodyPart` + rotation.
 - [x] SolarXR WebSocket server scaffold: accept, verify incoming `MessageBundle`,
       stream a `DataFeedUpdate` with one `TrackerData` per tracked bone.
+- [x] **Forward-kinematics solver** (vendored `skeletal_model`): BFS `do_fk` with
+      rotation inheritance (`input_rot_g` → else `parent_rot * calib_rot_l`) and
+      position propagation (`parent_pos + rot * -Y * length`), plus 3DoF root
+      anchoring at the origin.
+- [x] **Tracker attachment** (`Skeleton::attach_input_tracker`) + bone output
+      accessors (`bone_output_rot` / `bone_output_pos`), wired into `skeleton::solve_pose`.
 
 ## Core fusion (the hard part)
 
-- [ ] **Forward-kinematics solver.** `skeletal_model`'s `Skeleton::solve`/`do_fk` is
-      `todo!()` upstream. Implement the FK (pop node → solve edge → solve node) so a
-      partial tracker set yields a complete, constrained skeleton. This is *the*
-      central task.
-- [ ] **Bone lengths / proportions.** Feed real bone lengths (defaults + autobone /
-      user height) into `SkeletonConfig`.
-- [ ] **Tracker attachment.** Port `Skeleton::attach_input_tracker` (currently
-      commented out upstream): map a tracker's body position onto its bone and store
-      the calibrated local offset.
-- [ ] **Calibration.** Mounting reset (skip pose) → compute tracker→bone offsets;
-      full reset (standing) → compute global yaw/heading.
+- [ ] **Calibration.** Mounting reset (skip pose) → compute the tracker→bone mounting
+      offset so `input_rot_g` is the *bone's* global rotation, not the raw tracker
+      rotation (currently fed directly). Full reset (standing) → global heading.
+- [ ] **Frame alignment.** Convert the SlimeVR tracker/sensor frame into the
+      `skeletal_model` global frame (`+X` right, `+Y` up, `+Z` backward).
+- [ ] **Bone lengths / proportions.** Real user proportions (autobone / height).
+      Approximate adult defaults are in place.
 - [ ] **Drift compensation.** Use `vqf` (or a port of the Java complementary filter)
       for mag/accel yaw-drift correction on each tracker's rotation.
 - [ ] **Smoothing / prediction.** Port the Java server's filtering and pose smoothing.

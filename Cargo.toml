@@ -5,12 +5,16 @@ edition = "2021"
 description = "A from-scratch Rust rewrite of the SlimeVR full-body tracking server"
 license = "MIT OR Apache-2.0"
 
+[workspace]
+members = [".", "vendor/skeletal_model"]
+
 [dependencies]
 # ── SlimeVR-Rust boilerplate (the whole point of this project) ────────────────
 # firmware_protocol: the "Hey OVR =D 5" tracker UDP protocol (serverbound side).
 firmware_protocol = { git = "https://github.com/SlimeVR/SlimeVR-Rust", rev = "6d25f871f9fb4b2f52e2913ce35a2c771385a6a9" }
-# skeletal_model: the human skeleton graph + (unfinished) FK solver.
-skeletal_model = { git = "https://github.com/SlimeVR/SlimeVR-Rust", rev = "6d25f871f9fb4b2f52e2913ce35a2c771385a6a9" }
+# skeletal_model: the human skeleton graph + FK solver. Vendored so we can finish
+# the upstream `todo!()` solver in-place.
+skeletal_model = { path = "vendor/skeletal_model" }
 # vqf: the VQF IMU orientation filter (for server-side fusion / drift correction).
 vqf = { git = "https://github.com/SlimeVR/SlimeVR-Rust", rev = "6d25f871f9fb4b2f52e2913ce35a2c771385a6a9" }
 

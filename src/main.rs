@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
         if !trackers.is_empty() {
             tracing::trace!("trackers: {}", trackers.len());
         }
-        let new_pose = skeleton::estimate_pose(trackers.into_iter());
+        let new_pose = skeleton::solve_pose(trackers.into_iter());
         *pose.write().unwrap() = new_pose;
     }
 }

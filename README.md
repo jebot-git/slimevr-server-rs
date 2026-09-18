@@ -4,16 +4,23 @@ A from-scratch **Rust rewrite of the [SlimeVR](https://github.com/SlimeVR/SlimeV
 
 This is a **separate development** from [shora](https://github.com/jebot-git/shora). Shora currently *launches* the Java/Kotlin SlimeVR server as a headless subprocess; the goal of this project is to eventually replace that subprocess with a native Rust binary.
 
-> **Status: very early.** The first milestone stands up the input path (tracker UDP protocol → registry → skeleton) and scaffolds the WiVRn-facing SolarXR output. The core fusion solver is **not** implemented yet — see [`ROADMAP.md`](ROADMAP.md).
+> **Status: early but progressing.** The tracker input path and a first
+> forward-kinematics solver are working; the WiVRn-facing SolarXR output is
+> scaffolded. See [`ROADMAP.md`](ROADMAP.md).
 
 ## What SlimeVR-Rust provides (and what we build on top)
 
 | SlimeVR-Rust crate | What it gives us | Used here? |
 |---|---|---|
 | `firmware_protocol` | The "Hey OVR =D 5" tracker UDP protocol (`Packet`, `SbPacket`, `CbPacket`) | ✅ tracker input |
-| `skeletal_model` | The human-skeleton graph (`Skeleton`, `BoneKind`) + an **unfinished** FK solver | ✅ graph wired in |
+| `skeletal_model` | The human-skeleton graph (`Skeleton`, `BoneKind`) + FK solver | ✅ vendored; solver completed here |
 | `vqf` | The VQF IMU orientation filter | 🔜 future drift/filter work |
 | `solarxr` | A SolarXR **client** (not the server we need) | ❌ (we write the server) |
+
+`skeletal_model` is vendored under `vendor/skeletal_model` because its upstream FK
+solver (`Skeleton::solve` / `do_fk`) is still `todo!()`. We completed it in-place
+(BFS forward kinematics with per-edge rotation inheritance and per-node position
+propagation) and added `attach_input_tracker` + output accessors.
 
 The SolarXR *server* half (what WiVRn connects to) is implemented here from scratch on top of the vendored `solarxr_protocol` FlatBuffers bindings.
 
@@ -33,7 +40,7 @@ WiVRn ◄── WebSocket SolarXR (:21110) ── solarxr/mod.rs ◄── Pose 
 |---|---|
 | `tracker/udp.rs` | Tracker UDP protocol server: handshake response, ping/pong, rotation/accel/sensor-info |
 | `tracker/mod.rs` | `TrackerRegistry` — connected trackers keyed by MAC |
-| `skeleton/mod.rs` | Pose estimation + `skeletal_model::Skeleton` integration |
+| `skeleton/mod.rs` | Pose estimation: tracker rotations → `skeletal_model` FK solve → bone pose |
 | `solarxr/mod.rs` | SolarXR WebSocket server + `DataFeedUpdate` encoder |
 | `main.rs` | Orchestration: spawn servers, run the pose loop |
 

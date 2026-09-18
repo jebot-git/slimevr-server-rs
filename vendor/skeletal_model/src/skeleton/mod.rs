@@ -1,0 +1,255 @@
+//! The skeleton, and its representation as a graph data structure.
+//!
+//! The bread and butter of the skeletal model is the [`Skeleton`], which models the
+//! pose of a human. The skeleton is comprised of various bones and joints, and there
+//! are trackers that get "attached" to the skeleton that represent the trackers worn
+//! when using FBT.
+//!
+//!
+//! # Inputs and Outputs of the Skeleton
+//! The input trackers are what provide position and/or rotation to the skeleton.
+//!
+//! The output trackers are for providing 6DOF simulated "trackers" for use in apps that
+//! expect 6DOF trackers. These can be used similarly to how vive trackers are used.
+//! The pose of the various bones in the skeleton can also be read directly, instead of
+//! using the output trackers.
+//!
+//!
+//! # Calibration
+//! Before the skeleton can solve for the pose of the various bones and output trackers,
+//! it needs the user to stand in an initial calibration pose. This pose is
+//! pre-determined, and is necessary to compute the relative transforms of the input
+//! trackers to the bones they are attached to.
+//!
+//! Calibration may be necessary any time the local transform of the tracker with
+//! respect to its attached bone changes. This may occur in the following scenarios:
+//! * The physical tracker was not securely mounted to the body and shifted during use.
+//! * It is a 3DOF tracker experiencing IMU drift, such that the orientation
+//!   has diverged from the true value.
+//! * The lengths of the bones in the skeleton have been adjusted.
+//!
+//!
+//! # Skeleton Structure
+//! Fundamentally, the skeleton is a graph data structure. The graph is a "tree" with
+//! the root of the tree at the head of the skeleton. This graph consists of edges
+//! and nodes. Each edge has a "head" and a "tail" node. By convention, the side of the
+//! edge closer to the root of the tree is the head, and the side further is the tail.
+//! This gives a consistent directionality for the tree and makes it easier to describe
+//! parent/child relationships.
+//!
+//!
+//! ## The Different Kinds of Edges
+//! While all edges hold the same data internally, they play slightly different
+//! roles depending on what the edge represents. There are really two types of edges:
+//! * A regular bone in the human skeleton.
+//! * An offset between a tracker (either input or output) and the bone it is attached
+//!   to.
+//!
+//! The only difference between these two is that a tracker edge never has any children,
+//! and always has a bone as its parent. Also, its local transform with respect to its
+//! parent never changes between calibrations because unlike bones, trackers are assumed
+//! not to move once they are calibrated, whereas bones bend at their joints.
+//!
+//! ## Data in the Skeleton
+//! The data associated with edges in the skeleton is different from the data associated
+//! with nodes.
+//!
+//! #### Edge
+//! * [Rotation](crate::UnitQuat), both the local rotation from calibration, as well as the
+//!   latest global rotation. If the latest global rotation is not directly provided via
+//!   an input tracker, this will be solved for.
+//! * Type of edge (either [`BoneKind`], input tracker, or output tracker)
+//! * The length of the edge. This is defined by the user for bones, and computed at
+//!   calibration time for tracker edges.
+//!
+//! #### Node
+//! * The latest global position. If not directly provided via an input tracker, this
+//!   will be solved for.
+//!
+//! # The Skeletal Solver
+//! The goal of the skeletal model is to take the input data (positions and rotations),
+//! and compute output data (positions and rotations).
+//!
+//! To accomplish this, the solver starts at any nodes with known positions and performs
+//! "[breadth-first search][bfs]" (BFS), expanding  "outward" from the known positions.
+//! As the traversal proceeds, it uses any known input positions or rotations to compute
+//! the output positions or rotations, step by step.
+//!
+//! [bfs]: https://en.wikipedia.org/wiki/Graph_traversal#Breadth-first_search
+//!
+//! Here is a breakdown of exactly how the outputs are computed from the inputs, at
+//! each step of the traversal:
+//! #### Edge
+//! * If there is an input rotation, copy it to the output rotation
+//! * If there is no input rotation, output the calibration rotation
+//!
+//! #### Node
+//! * If there is an input position, copy it to the output position
+//! * If there is no input position, use the previous edge's rotation and length to
+//!   compute the output position
+//!
+//! ## Handling Equidistant Nodes
+//! In some cases, a node that needs its output position computed, will be equidistant
+//! to two or more other nodes in the graph. In this case, due to small errors and
+//! inconsistencies of the actual global positions, this node will have a different
+//! output position depending on which of the nodes reaches it first. To avoid a
+//! scenario where the value switches between different outputs, a canonical order is
+//! used for the nodes. This order is unspecified, but guaranteed not to change until
+//! new input trackers are added/removed.
+
+mod calibrate;
+mod edge;
+mod node;
+mod solver;
+
+pub(crate) use edge::Edge;
+pub(crate) use node::Node;
+
+use core::ops::Index;
+use petgraph::graph::{EdgeIndex, NodeIndex};
+
+pub(crate) type Graph = petgraph::graph::UnGraph<Node, Edge>;
+
+use crate::bone::{BoneKind, BoneMap};
+use crate::newtypes::Global;
+use crate::{Point, UnitQuat};
+
+/// Used to initialize the [`Skeleton`] with its initial parameters
+pub struct SkeletonConfig {
+	bone_lengths: BoneMap<f32>,
+}
+impl SkeletonConfig {
+	pub fn new(bone_lengths: BoneMap<f32>) -> Self {
+		SkeletonConfig { bone_lengths }
+	}
+}
+
+/// The `Skeleton` provides a way of reading, writing, and solving for the pose of
+/// a human wearing FBT.
+///
+/// See the [`crate::skeleton`] module for more information.
+pub struct Skeleton {
+	bone_map: BoneMap<EdgeIndex>,
+	graph: Graph,
+}
+impl Skeleton {
+	/// Creates a new `Skeleton` from [`SkeletonConfig`]. Initially, the skeleton will
+	/// not have any input trackers or output trackers.
+	pub fn new(config: &SkeletonConfig) -> Self {
+		let mut g = Graph::new_undirected();
+
+		// Option is used for resilience against bugs while the map is being built
+		let mut bone_map: BoneMap<Option<EdgeIndex>> = BoneMap::default();
+
+		// Create root skeletal bone: edge (bone) connects to nodes (joints)
+		{
+			let parent = g.add_node(Node::new());
+			let child = g.add_node(Node::new());
+			let edge = g.update_edge(
+				parent,
+				child,
+				Edge::new(BoneKind::Neck, config.bone_lengths[BoneKind::Neck]),
+			);
+			bone_map[BoneKind::Neck] = Some(edge);
+		}
+
+		// This closure adds all the immediate children of `parent_bone` to the graph
+		let mut add_child_bones = |parent_bone: BoneKind| {
+			let parent_edge =
+				bone_map[parent_bone].expect("Bone was not yet added to graph");
+			let (_parent_node, child_node) = g.edge_endpoints(parent_edge).unwrap(); // Get child node of edge
+
+			// The old child (old target) becomes the new parent (new source).
+			let new_parent = child_node;
+			let new_child = g.add_node(Node::new());
+
+			for &child_kind in parent_bone.children() {
+				let edge = g.update_edge(
+					new_parent,
+					new_child,
+					Edge::new(child_kind, config.bone_lengths[child_kind]),
+				);
+
+				bone_map[child_kind] = Some(edge);
+			}
+		};
+
+		// Call `add_child_bones` in a depth-first traversal to build the actual graph.
+		let mut bone_stack = vec![BoneKind::Neck];
+		while !bone_stack.is_empty() {
+			let parent_bone = bone_stack.pop().unwrap();
+			add_child_bones(parent_bone);
+			bone_stack.extend(parent_bone.children());
+		}
+
+		// Map is populated, get rid of the `Optional`
+		let bone_map: BoneMap<EdgeIndex> = bone_map.map(|_kind, bone| bone.unwrap());
+
+		Self { graph: g, bone_map }
+	}
+
+	/// Attach a 3DoF tracker rotation (in the skeleton's global frame) to a bone,
+	/// pinning that bone's solved rotation to it. `rot` is `[w, i, j, k]`.
+	pub fn attach_input_tracker(&mut self, bone: BoneKind, rot: [f32; 4]) {
+		let edge = self.bone_map[bone];
+		let q = UnitQuat::from_quaternion(nalgebra::Quaternion::new(rot[0], rot[1], rot[2], rot[3]));
+		self.graph[edge].input_rot_g = Some(Global(q));
+	}
+
+	/// Pin the head joint's global position (the 6DoF root anchor).
+	pub fn set_root_position(&mut self, pos: Point) {
+		let root = self.root_node();
+		self.graph[root].input_pos_g = Some(Global(pos));
+	}
+
+	/// The solved global rotation of a bone as `[w, i, j, k]` (valid after [`Self::solve`]).
+	pub fn bone_output_rot(&self, bone: BoneKind) -> [f32; 4] {
+		let q = self.graph[self.bone_map[bone]].output_rot_g.0;
+		[q.w, q.i, q.j, q.k]
+	}
+
+	/// The solved global position of a bone's child joint (valid after [`Self::solve`]).
+	pub fn bone_output_pos(&self, bone: BoneKind) -> Point {
+		let edge = self.bone_map[bone];
+		let child = self.graph.edge_endpoints(edge).unwrap().1;
+		self.graph[child].output_pos_g.0
+	}
+
+	// ---- Private fns ----
+
+	/// Get the nodes of the graph that have a `Some(_)` [`Node::input_pos_g`]
+	fn find_root_nodes(&self) -> impl Iterator<Item = NodeIndex> + '_ {
+		self.graph
+			.node_indices()
+			.filter(|idx| self.graph[*idx].input_pos_g.is_some())
+	}
+}
+impl Index<BoneKind> for Skeleton {
+	type Output = Edge;
+
+	fn index(&self, index: BoneKind) -> &Self::Output {
+		let edge = self.bone_map[index];
+		&self.graph[edge]
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	/// Tests that all lengths of the skeleton are properly initialized based on `SkeletonConfig`
+	#[test]
+	fn test_lengths() {
+		let mut bone_lengths = BoneMap::new([0.; BoneKind::num_types()]);
+
+		bone_lengths[BoneKind::FootL] = 4.0;
+
+		let config = SkeletonConfig::new(bone_lengths);
+
+		let skeleton = Skeleton::new(&config);
+
+		for (bone, length) in bone_lengths.iter() {
+			assert_eq!(&skeleton[bone].length, length);
+		}
+	}
+}

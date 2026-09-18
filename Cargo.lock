@@ -950,7 +950,6 @@ dependencies = [
 [[package]]
 name = "skeletal_model"
 version = "0.0.0"
-source = "git+https://github.com/SlimeVR/SlimeVR-Rust?rev=6d25f871f9fb4b2f52e2913ce35a2c771385a6a9#6d25f871f9fb4b2f52e2913ce35a2c771385a6a9"
 dependencies = [
  "approx",
  "derive_more",
