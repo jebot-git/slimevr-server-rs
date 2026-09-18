@@ -7,4 +7,4 @@ pub const TRACKER_PORT: u16 = 6969;
 pub const SOLARXR_PORT: u16 = 21110;
 
 /// How often the server sends a ping to each tracker (liveness check).
-pub const PING_INTERVAL_SECS: u64 = 10;
+pub const PING_INTERVAL_SECS: u64 = 2;

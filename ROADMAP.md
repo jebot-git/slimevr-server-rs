@@ -59,10 +59,12 @@ dependency chain: nothing above an item can be finished without the items below 
 - [ ] Tracker body-part assignment (auto + manual), matching the Java server's setup.
 - [ ] Skeleton/pose logging or a lightweight debug UI.
 - [~] Parity testing against the Java server — `examples/solarxr_dump` +
-      `examples/tracker_emulate` built; first pass found & fixed a frame-alignment
-      bug (ktmath `Quaternion(w,x,y,z)` order) and identified two remaining gaps:
-      1. bone lengths differ (Java autobones; we use approximate defaults),
-      2. the `skeletal_model` BoneKind set lacks UPPER_CHEST / SHOULDERS / HIPs /
-         HEAD that the Java skeleton emits.
+      `examples/tracker_emulate` built; **end-to-end live test succeeded** (Rust
+      server swapped in for the Java server, 6 live trackers connected, skeleton
+      streamed over SolarXR). Found & fixed: ktmath `(w,x,y,z)` frame-alignment
+      bug and a 10s ping interval exceeding shora's 5s tracker timeout. Remaining:
+      1. autobone bone lengths, 2. `skeletal_model` lacks UPPER_CHEST/SHOULDERS/
+      HIPs/HEAD, 3. ankle→foot vs lower-leg designation differs from the Java
+      config.
 - [ ] Remove the vendored `solarxr_protocol` in favour of the upstream git dep once
       the version is pinned.

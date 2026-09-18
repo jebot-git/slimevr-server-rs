@@ -48,6 +48,10 @@ pub async fn run(
                 handle_sensor_info_raw(data, src, &registry, &calib);
                 continue;
             }
+            // Log non-rotation packet tags once each for debugging.
+            if tag != 17 && tag != 4 {
+                tracing::debug!(?src, tag, len, "tracker packet");
+            }
         }
 
         // Reuse the firmware_protocol types for everything else.
@@ -134,6 +138,7 @@ fn handle_sensor_info_raw(
     // Frame alignment: set the mounting orientation from the tracker's body part.
     if let Some(mac) = mac {
         calib.write().unwrap().set_mounting(mac, position);
+        tracing::info!(?src, ?mac, position, "SENSOR_INFO");
     }
 }
 
