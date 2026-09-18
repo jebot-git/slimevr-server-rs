@@ -5,6 +5,7 @@
 //! packets, and reads the raw payload for `SENSOR_INFO` (whose upstream struct
 //! omits the v13 `tracker_position`/mag fields).
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -27,11 +28,13 @@ const TAG_SENSOR_INFO: i32 = 15;
 const HANDSHAKE_RESPONSE_SEQ: u64 = 2_328_174_443_102_028_832;
 
 /// Run the tracker UDP server forever, updating `registry` and reacting to user
-/// actions (resets) through `calib`.
+/// actions (resets) through `calib`. `assignments` overrides a tracker's
+/// self-reported body-part position (manual assignment).
 pub async fn run(
     bind: SocketAddr,
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
+    assignments: Arc<HashMap<[u8; 6], u8>>,
 ) -> anyhow::Result<()> {
     let socket = UdpSocket::bind(bind).await?;
     tracing::info!("tracker UDP server listening on {bind}");
@@ -45,7 +48,7 @@ pub async fn run(
 
         if let Some(tag) = read_tag(data) {
             if tag == TAG_SENSOR_INFO {
-                handle_sensor_info_raw(data, src, &registry, &calib);
+                handle_sensor_info_raw(data, src, &registry, &calib, &assignments);
                 continue;
             }
             // Log non-rotation packet tags once each for debugging.
@@ -122,6 +125,7 @@ fn handle_sensor_info_raw(
     src: SocketAddr,
     registry: &Arc<RwLock<TrackerRegistry>>,
     calib: &Arc<RwLock<Calibration>>,
+    assignments: &Arc<HashMap<[u8; 6], u8>>,
 ) {
     // payload starts after the 12-byte header.
     if buf.len() < 19 {
@@ -130,7 +134,14 @@ fn handle_sensor_info_raw(
     let sensor_id = buf[12];
     // buf[13] = status, buf[14] = type, buf[15..17] = mag config,
     // buf[17] = hasCompletedRestCalibration, buf[18] = tracker_position.
-    let position = buf[18];
+    let reported_position = buf[18];
+
+    // Manual assignment (config) overrides the tracker's self-reported position.
+    let mac = registry.read().unwrap().get(src, 0).map(|t| t.mac);
+    let position = mac
+        .and_then(|m| assignments.get(&m).copied())
+        .unwrap_or(reported_position);
+
     let mac = registry
         .write()
         .unwrap()

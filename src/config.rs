@@ -1,6 +1,7 @@
 //! Server configuration: CLI flags, an optional TOML file, and the resolved
 //! runtime values. CLI flags override file values, which override defaults.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -21,6 +22,36 @@ pub const DEFAULT_TRACKER_TIMEOUT_SECS: u64 = 5;
 
 /// Default user height for autobone bone lengths.
 pub const DEFAULT_HEIGHT_M: f32 = 1.80;
+
+/// Parse a MAC address like `AA:BB:CC:DD:EE:FF` or `AABBCCDDEEFF` (hex, with
+/// optional `:`/`-` separators) into its 6 bytes.
+pub fn parse_mac(s: &str) -> anyhow::Result<[u8; 6]> {
+    let cleaned: String = s.chars().filter(|c| *c != ':' && *c != '-').collect();
+    anyhow::ensure!(
+        cleaned.len() == 12,
+        "MAC must be exactly 12 hex characters, got {s:?}"
+    );
+    let mut out = [0u8; 6];
+    for i in 0..6 {
+        let byte = &cleaned[i * 2..i * 2 + 2];
+        out[i] = u8::from_str_radix(byte, 16)
+            .map_err(|e| anyhow::anyhow!("invalid MAC byte {byte:?}: {e}"))?;
+    }
+    Ok(out)
+}
+
+/// Parse a `MAC=POSITION` assignment string (e.g. `AA:BB:CC:DD:EE:FF=9`).
+pub fn parse_assignment(s: &str) -> anyhow::Result<([u8; 6], u8)> {
+    let (mac, pos) = s
+        .split_once('=')
+        .ok_or_else(|| anyhow::anyhow!("assignment must be `MAC=POSITION`, got {s:?}"))?;
+    let mac = parse_mac(mac.trim())?;
+    let pos: u8 = pos
+        .trim()
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid tracker position {pos:?}: {e}"))?;
+    Ok((mac, pos))
+}
 
 /// Command-line interface.
 #[derive(Parser, Debug)]
@@ -49,6 +80,18 @@ pub struct Cli {
     /// User height in meters (drives autobone bone lengths).
     #[arg(long)]
     pub height_m: Option<f32>,
+
+    /// Override a tracker's body-part assignment: `MAC=POSITION` (repeatable).
+    #[arg(long, value_name = "MAC=POSITION")]
+    pub assign: Vec<String>,
+}
+
+/// One manual tracker assignment from a TOML file.
+#[derive(Deserialize, Default, Debug, Clone)]
+#[serde(default, deny_unknown_fields)]
+pub struct AssignmentFile {
+    pub mac: String,
+    pub position: u8,
 }
 
 /// Values read from a TOML config file. Everything is optional so a partial file
@@ -61,6 +104,8 @@ pub struct FileConfig {
     pub ping_interval_secs: Option<u64>,
     pub tracker_timeout_secs: Option<u64>,
     pub height_m: Option<f32>,
+    #[serde(default)]
+    pub tracker_assignments: Vec<AssignmentFile>,
 }
 
 /// Resolved runtime configuration.
@@ -71,6 +116,8 @@ pub struct Config {
     pub ping_interval_secs: u64,
     pub tracker_timeout_secs: u64,
     pub height_m: f32,
+    /// Manual tracker body-part overrides, keyed by MAC.
+    pub tracker_assignments: HashMap<[u8; 6], u8>,
 }
 
 impl Default for Config {
@@ -81,6 +128,7 @@ impl Default for Config {
             ping_interval_secs: DEFAULT_PING_INTERVAL_SECS,
             tracker_timeout_secs: DEFAULT_TRACKER_TIMEOUT_SECS,
             height_m: DEFAULT_HEIGHT_M,
+            tracker_assignments: HashMap::new(),
         }
     }
 }
@@ -95,7 +143,7 @@ impl Config {
                 .map_err(|e| anyhow::anyhow!("failed to read config file {path:?}: {e}"))?;
             let file: FileConfig = toml::from_str(&text)
                 .map_err(|e| anyhow::anyhow!("failed to parse config file {path:?}: {e}"))?;
-            cfg.apply_file(file);
+            cfg.apply_file(file)?;
         }
 
         if let Some(v) = cli.tracker_port {
@@ -113,11 +161,15 @@ impl Config {
         if let Some(v) = cli.height_m {
             cfg.height_m = v;
         }
+        for s in &cli.assign {
+            let (mac, position) = parse_assignment(s)?;
+            cfg.tracker_assignments.insert(mac, position);
+        }
 
         Ok(cfg)
     }
 
-    fn apply_file(&mut self, f: FileConfig) {
+    fn apply_file(&mut self, f: FileConfig) -> anyhow::Result<()> {
         if let Some(v) = f.tracker_port {
             self.tracker_port = v;
         }
@@ -133,6 +185,12 @@ impl Config {
         if let Some(v) = f.height_m {
             self.height_m = v;
         }
+        for a in f.tracker_assignments {
+            let mac = parse_mac(&a.mac)
+                .map_err(|e| anyhow::anyhow!("bad tracker_assignments mac {:?}: {e}", a.mac))?;
+            self.tracker_assignments.insert(mac, a.position);
+        }
+        Ok(())
     }
 }
 
@@ -159,6 +217,7 @@ mod tests {
             ping_interval_secs: Some(5),
             tracker_timeout_secs: Some(9),
             height_m: Some(1.65),
+            assign: vec!["aa:bb:cc:dd:ee:ff=9".into()],
         };
         let cfg = Config::load(&cli).unwrap();
         assert_eq!(cfg.tracker_port, 7000);
@@ -166,6 +225,7 @@ mod tests {
         assert_eq!(cfg.ping_interval_secs, 5);
         assert_eq!(cfg.tracker_timeout_secs, 9);
         assert_eq!(cfg.height_m, 1.65);
+        assert_eq!(cfg.tracker_assignments[&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]], 9);
     }
 
     #[test]
@@ -173,11 +233,48 @@ mod tests {
         let text = "height_m = 1.65\nsolarxr_port = 22000\n";
         let file: FileConfig = toml::from_str(text).unwrap();
         let mut cfg = Config::default();
-        cfg.apply_file(file);
+        cfg.apply_file(file).unwrap();
         assert_eq!(cfg.height_m, 1.65);
         assert_eq!(cfg.solarxr_port, 22000);
         assert_eq!(cfg.tracker_port, DEFAULT_TRACKER_PORT);
         assert_eq!(cfg.ping_interval_secs, DEFAULT_PING_INTERVAL_SECS);
         assert_eq!(cfg.tracker_timeout_secs, DEFAULT_TRACKER_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn file_assignments_parse() {
+        let text = "[[tracker_assignments]]\nmac = \"AA:BB:CC:DD:EE:FF\"\nposition = 9\n";
+        let file: FileConfig = toml::from_str(text).unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file(file).unwrap();
+        assert_eq!(cfg.tracker_assignments[&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]], 9);
+    }
+
+    #[test]
+    fn parse_mac_formats() {
+        assert_eq!(
+            parse_mac("AA:BB:CC:DD:EE:FF").unwrap(),
+            [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]
+        );
+        assert_eq!(
+            parse_mac("aabbccddeeff").unwrap(),
+            [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]
+        );
+        assert_eq!(
+            parse_mac("aa-bb-cc-dd-ee-ff").unwrap(),
+            [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]
+        );
+        assert!(parse_mac("aabbcc").is_err());
+        assert!(parse_mac("zz:bb:cc:dd:ee:ff").is_err());
+    }
+
+    #[test]
+    fn parse_assignment_round_trips() {
+        assert_eq!(
+            parse_assignment("AA:BB:CC:DD:EE:FF=10").unwrap(),
+            ([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff], 10)
+        );
+        assert!(parse_assignment("AA:BB:CC:DD:EE:FF").is_err());
+        assert!(parse_assignment("AA:BB:CC:DD:EE:FF=notanumber").is_err());
     }
 }

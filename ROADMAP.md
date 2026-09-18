@@ -59,9 +59,11 @@ dependency chain: nothing above an item can be finished without the items below 
 ## Ops & ergonomics
 
 - [~] Config file + CLI. TOML config file + `--tracker-port`/`--solarxr-port`/
-      `--ping-interval-secs`/`--height-m` flags (precedence: defaults → file →
-      CLI). Tracker body-part assignment (auto + manual) is still TODO.
-- [ ] Tracker body-part assignment (auto + manual), matching the Java server's setup.
+      `--ping-interval-secs`/`--tracker-timeout-secs`/`--height-m`/
+      `--assign MAC=POSITION` flags (precedence: defaults → file → CLI).
+- [x] Tracker body-part assignment (auto + manual). Auto reads SENSOR_INFO
+      `tracker_position`; manual overrides it per-MAC via config/`--assign`,
+      matching the Java server's `vrconfig.yml` assignment.
 - [ ] Skeleton/pose logging or a lightweight debug UI.
 - [~] Parity testing against the Java server — `examples/solarxr_dump` +
       `examples/tracker_emulate` built; **end-to-end live test succeeded** (Rust

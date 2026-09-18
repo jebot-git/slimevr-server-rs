@@ -46,12 +46,14 @@ async fn main() -> anyhow::Result<()> {
     let registry = Arc::new(RwLock::new(TrackerRegistry::default()));
     let pose: Arc<RwLock<Pose>> = Arc::new(RwLock::new(Pose::default()));
     let calib: Arc<RwLock<Calibration>> = Arc::new(RwLock::new(Calibration::new()));
+    let assignments = Arc::new(config.tracker_assignments.clone());
 
     // 1. Tracker UDP protocol server ("Hey OVR =D 5").
     let _tracker_task = tokio::spawn(tracker::udp::run(
         SocketAddr::from(([0, 0, 0, 0], config.tracker_port)),
         registry.clone(),
         calib.clone(),
+        assignments,
     ));
 
     // 2. SolarXR WebSocket server (WiVRn connects here).
