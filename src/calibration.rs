@@ -266,12 +266,17 @@ pub fn default_mounting(position: u8) -> UnitQuaternion<f32> {
 
 // ---- Yaw helpers ----
 //
-// "Yaw" here is the heading: the direction the forward vector (-Z) points in the
-// horizontal XZ plane. `+X` right, `+Y` up, `-Z` forward.
+// "Yaw" is extracted the same way the Java server does: the `y` component of the
+// ktmath `YZX` Euler decomposition. For a quaternion (w, x, y, z) this is
+// `atan2(2(w*y - x*z), w² + x² - y² - z²)`. This matters for trackers whose IMU is
+// mounted with roll/pitch (the HaritoraX legs): a forward-vector heading and the
+// YZX yaw diverge by tens of degrees there, which corrupts the gyro/attachment
+// fix decomposition and turns a knee bend into lateral motion. `+X` right, `+Y`
+// up, `-Z` forward.
 
 fn yaw_of(q: &UnitQuaternion<f32>) -> f32 {
-    let f = q * Vector3::new(0.0, 0.0, -1.0);
-    (-f.x).atan2(-f.z)
+    let (w, x, y, z) = (q.w, q.i, q.j, q.k);
+    (2.0 * (w * y - x * z)).atan2(w * w + x * x - y * y - z * z)
 }
 
 fn yaw_quat(a: f32) -> UnitQuaternion<f32> {

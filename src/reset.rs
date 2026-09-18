@@ -4,11 +4,31 @@
 //! it into the corresponding per-tracker calibration update.
 
 use firmware_protocol::ActionType;
-use nalgebra::{Quaternion, UnitQuaternion};
+use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::calibration::Calibration;
 use crate::feeder::HmdPose;
 use crate::tracker::TrackerRegistry;
+
+/// Log each tracker's raw and calibrated orientation for debugging. The raw
+/// quaternion is scalar-first (w,x,y,z); `adj_up`/`adj_fwd` are the calibrated
+/// rotation applied to the world +Y (up) and -Z (forward) axes — when a tracker
+/// is correctly calibrated and upright these read ~(0,1,0) and ~(0,0,-1).
+pub fn dump_tracker_orientations(registry: &TrackerRegistry, calib: &Calibration) {
+    for t in registry.iter() {
+        let Some(raw) = t.rotation else { continue };
+        let adj = calib.adjust(t.mac, raw);
+        let up = adj * Vector3::y();
+        let fwd = adj * Vector3::new(0.0, 0.0, -1.0);
+        tracing::info!(
+            pos = t.position,
+            raw = format!("({:.3},{:.3},{:.3},{:.3})", raw.w, raw.i, raw.j, raw.k),
+            adj_up = format!("({:.2},{:.2},{:.2})", up.x, up.y, up.z),
+            adj_fwd = format!("({:.2},{:.2},{:.2})", fwd.x, fwd.y, fwd.z),
+            "tracker orientation"
+        );
+    }
+}
 
 /// Handle a tracker user action (full / yaw / mounting reset).
 pub fn handle_user_action(
@@ -20,6 +40,7 @@ pub fn handle_user_action(
     match action {
         ActionType::Reset | ActionType::ResetYaw | ActionType::ResetMounting => {
             let reference = reference_rotation(registry, hmd).unwrap_or_else(UnitQuaternion::identity);
+            dump_tracker_orientations(registry, calib);
             let mut count = 0;
             for t in registry.iter() {
                 let Some(raw) = t.rotation else { continue };
