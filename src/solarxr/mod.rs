@@ -35,6 +35,7 @@ use solarxr_protocol::rpc::{
     AutoBoneProcessRequest, AutoBoneProcessStatusResponse, AutoBoneProcessStatusResponseArgs,
     AutoBoneProcessType, ResetRequest, ResetResponse, ResetResponseArgs, ResetStatus, ResetType,
     RpcMessage, RpcMessageHeader, RpcMessageHeaderArgs, SettingsResponse, SettingsResponseArgs,
+    SteamVRTrackersSetting, SteamVRTrackersSettingArgs,
 };
 use solarxr_protocol::{MessageBundle, MessageBundleArgs};
 use skeletal_model::BoneMap;
@@ -521,11 +522,39 @@ fn build_reset_response(reset_type: ResetType) -> Vec<u8> {
     fbb.finished_data().to_vec()
 }
 
-/// Build an (empty) `SettingsResponse` — enough to satisfy the client's
-/// `SettingsRequest` during the handshake.
+/// Build a `SettingsResponse` answering the client's `SettingsRequest`.
+///
+/// The `steam_vr_trackers` toggles are what WiVRn/Monado's SolarXR driver uses
+/// to build its `enabled_bones` bitmask: a tracker's pose is only served when
+/// the corresponding toggle is set. We always emulate the full set of trackers,
+/// so every toggle is enabled. Sending the default (all-false) response leaves
+/// the trackers enumerated but posesless — the devices appear yet VRChat never
+/// sees valid tracker data.
 fn build_settings_response() -> Vec<u8> {
     let mut fbb = flatbuffers::FlatBufferBuilder::new();
-    let resp = SettingsResponse::create(&mut fbb, &SettingsResponseArgs::default());
+    let trackers = SteamVRTrackersSetting::create(
+        &mut fbb,
+        &SteamVRTrackersSettingArgs {
+            waist: true,
+            chest: true,
+            left_foot: true,
+            right_foot: true,
+            left_knee: true,
+            right_knee: true,
+            left_elbow: true,
+            right_elbow: true,
+            left_hand: true,
+            right_hand: true,
+            ..Default::default()
+        },
+    );
+    let resp = SettingsResponse::create(
+        &mut fbb,
+        &SettingsResponseArgs {
+            steam_vr_trackers: Some(trackers),
+            ..Default::default()
+        },
+    );
     let header = RpcMessageHeader::create(
         &mut fbb,
         &RpcMessageHeaderArgs {
@@ -683,7 +712,18 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         let header = msgs.get(0);
         assert_eq!(header.message_type(), RpcMessage::SettingsResponse);
-        assert!(header.message_as_settings_response().is_some());
+        let resp = header.message_as_settings_response().unwrap();
+        let toggles = resp.steam_vr_trackers().unwrap();
+        assert!(toggles.waist());
+        assert!(toggles.chest());
+        assert!(toggles.left_foot());
+        assert!(toggles.right_foot());
+        assert!(toggles.left_knee());
+        assert!(toggles.right_knee());
+        assert!(toggles.left_elbow());
+        assert!(toggles.right_elbow());
+        assert!(toggles.left_hand());
+        assert!(toggles.right_hand());
     }
 
     #[tokio::test]

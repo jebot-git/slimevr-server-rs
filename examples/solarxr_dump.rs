@@ -69,9 +69,9 @@ async fn main() -> anyhow::Result<()> {
                     let h = msgs.get(i);
                     if h.message_type() == DataFeedMessage::DataFeedUpdate {
                         if let Some(update) = h.message_as_data_feed_update() {
-                            if let Some(bones) = update.bones() {
-                                for j in 0..bones.len() {
-                                    print_bone(&bones.get(j));
+                            if let Some(trackers) = update.synthetic_trackers() {
+                                for j in 0..trackers.len() {
+                                    print_tracker(&trackers.get(j));
                                 }
                             }
                         }
@@ -119,4 +119,21 @@ fn print_bone(b: &Bone<'_>) {
         "{name:>16} rot=({qx:+.4},{qy:+.4},{qz:+.4},{qw:+.4}) pos=({px:+.4},{py:+.4},{pz:+.4}) len={:.4}",
         b.bone_length()
     );
+}
+
+fn print_tracker(t: &solarxr_protocol::data_feed::tracker::TrackerData<'_>) {
+    let part = t
+        .info()
+        .map(|i| i.body_part().variant_name().unwrap_or("UNKNOWN"))
+        .unwrap_or("?");
+    let (qx, qy, qz, qw) = t
+        .rotation()
+        .map(|q| (q.x(), q.y(), q.z(), q.w()))
+        .unwrap_or_default();
+    let (px, py, pz) = t
+        .position()
+        .map(|p| (p.x(), p.y(), p.z()))
+        .unwrap_or_default();
+    let num = t.tracker_id().map(|id| id.tracker_num()).unwrap_or(0);
+    println!("TRACKER[{num:>2}] {part:>16} rot=({qx:+.4},{qy:+.4},{qz:+.4},{qw:+.4}) pos=({px:+.4},{py:+.4},{pz:+.4})");
 }
