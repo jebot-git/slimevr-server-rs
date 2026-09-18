@@ -47,9 +47,10 @@ dependency chain: nothing above an item can be finished without the items below 
       error, triggered via `AutoBoneProcessRequest` RPC. This is a simplified port
       of SlimeVR's `AutoBone` — the full multi-objective error set (slide/offset/
       proportion/position), recording save/load, and status callbacks are still TODO.
-- [~] **Smoothing / prediction.** A per-tracker slerp smoothing filter is in
-      (`src/smoothing.rs`, `--smoothing`). Prediction (latency compensation via
-      angular velocity) and the Java server's `LegTweaks`/filtering are still TODO.
+- [~] **Smoothing / prediction.** Per-tracker rotation filtering is in
+      (`src/smoothing.rs`): a slerp smoothing EMA (`--smoothing`) and finite-
+      difference prediction for latency compensation (`--prediction`). The Java
+      server's `LegTweaks`/position filtering are still TODO.
 
 ## Protocol completeness
 
