@@ -11,6 +11,7 @@ use nalgebra::{Quaternion, UnitQuaternion};
 use skeletal_model::skeleton::SkeletonConfig;
 use skeletal_model::{BoneKind, BoneMap, Skeleton};
 
+use crate::calibration::Calibration;
 use crate::tracker::Tracker;
 
 /// Map a SlimeVR `TrackerPosition` id (from SENSOR_INFO) to the bone it drives.
@@ -73,6 +74,14 @@ fn default_bone_lengths() -> BoneMap<f32> {
     m
 }
 
+/// The expected global orientation of a bone in the standing calibration pose
+/// (nalgebra 0.32). Used as the `bone_calib` target of a mounting reset.
+pub fn bone_calibration_rotation(position: u8) -> Option<UnitQuaternion<f32>> {
+    let bone = bone_kind_for_position(position)?;
+    let q = bone.calibration_rotation().0; // nalgebra 0.31 UnitQuaternion
+    Some(UnitQuaternion::from_quaternion(Quaternion::new(q.w, q.i, q.j, q.k)))
+}
+
 /// Build a [`Skeleton`] with default bone lengths.
 fn build_skeleton() -> Skeleton {
     Skeleton::new(&SkeletonConfig::new(default_bone_lengths()))
@@ -80,16 +89,19 @@ fn build_skeleton() -> Skeleton {
 
 /// Solve the skeleton from the tracker set and return `BodyPart id → rotation`.
 ///
-/// Tracker rotations are fed directly as the bone's global rotation. The FK solver
-/// then fills in every untracked bone. The returned quaternion is in the
-/// `skeletal_model` global frame (see its `conventions` module).
-pub fn solve_pose(trackers: impl Iterator<Item = Tracker>) -> HashMap<u8, UnitQuaternion<f32>> {
+/// Each tracker's raw rotation is first adjusted by its mounting offset and the
+/// global heading (see [`Calibration`]), then fed as its bone's global rotation.
+/// The FK solver fills in every untracked bone.
+pub fn solve_pose(
+    trackers: impl Iterator<Item = Tracker>,
+    calib: &Calibration,
+) -> HashMap<u8, UnitQuaternion<f32>> {
     let mut skeleton = build_skeleton();
 
     for t in trackers {
-        if let (Some(bone), Some(rot)) = (bone_kind_for_position(t.position), t.rotation) {
-            // nalgebra 0.32 UnitQuaternion -> [w, i, j, k] for the vendored crate.
-            skeleton.attach_input_tracker(bone, [rot.w, rot.i, rot.j, rot.k]);
+        if let (Some(bone), Some(raw)) = (bone_kind_for_position(t.position), t.rotation) {
+            let adjusted = calib.adjust(t.mac, raw);
+            skeleton.attach_input_tracker(bone, [adjusted.w, adjusted.i, adjusted.j, adjusted.k]);
         }
     }
 
@@ -148,7 +160,7 @@ mod tests {
             accel: None,
             last_seen: std::time::Instant::now(),
         };
-        let pose = solve_pose(std::iter::once(t));
+        let pose = solve_pose(std::iter::once(t), &Calibration::new());
         // All 16 bones map to a SolarXR body part.
         assert_eq!(pose.len(), 16);
         assert!(pose.contains_key(&3)); // chest

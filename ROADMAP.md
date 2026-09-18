@@ -20,14 +20,21 @@ dependency chain: nothing above an item can be finished without the items below 
       anchoring at the origin.
 - [x] **Tracker attachment** (`Skeleton::attach_input_tracker`) + bone output
       accessors (`bone_output_rot` / `bone_output_pos`), wired into `skeleton::solve_pose`.
+- [x] **Calibration / offsets** (`src/calibration.rs`): per-tracker mounting offset
+      (`offset = raw⁻¹ * bone_calib`) and a global full-reset heading correction
+      (`heading = inverse_yaw(reference)`), applied as `heading * raw * offset`.
+      Triggered from tracker user actions (`Reset` / `ResetYaw` / `ResetMounting`)
+      via `src/reset.rs`.
 
 ## Core fusion (the hard part)
 
-- [ ] **Calibration.** Mounting reset (skip pose) → compute the tracker→bone mounting
-      offset so `input_rot_g` is the *bone's* global rotation, not the raw tracker
-      rotation (currently fed directly). Full reset (standing) → global heading.
-- [ ] **Frame alignment.** Convert the SlimeVR tracker/sensor frame into the
-      `skeletal_model` global frame (`+X` right, `+Y` up, `+Z` backward).
+- [ ] **Calibration refinements.** The mounting offset currently assumes the standing
+      pose (`BoneKind::calibration_rotation`) and no per-arm skip-pose/T-pose modes,
+      and full reset only isolates yaw. Mounting reset in the skip pose and arm-mode
+      handling remain.
+- [ ] **Frame alignment.** The mounting offset already absorbs the tracker→bone frame
+      difference (both share gravity "up"), but the SlimeVR sensor↔skeletal_model
+      sign conventions have not been explicitly verified end-to-end.
 - [ ] **Bone lengths / proportions.** Real user proportions (autobone / height).
       Approximate adult defaults are in place.
 - [ ] **Drift compensation.** Use `vqf` (or a port of the Java complementary filter)

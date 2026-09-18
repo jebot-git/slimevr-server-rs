@@ -40,7 +40,9 @@ WiVRn ◄── WebSocket SolarXR (:21110) ── solarxr/mod.rs ◄── Pose 
 |---|---|
 | `tracker/udp.rs` | Tracker UDP protocol server: handshake response, ping/pong, rotation/accel/sensor-info |
 | `tracker/mod.rs` | `TrackerRegistry` — connected trackers keyed by MAC |
-| `skeleton/mod.rs` | Pose estimation: tracker rotations → `skeletal_model` FK solve → bone pose |
+| `calibration.rs` | Per-tracker mounting offsets + full-reset heading (`heading * raw * offset`) |
+| `reset.rs` | Tracker user actions (`Reset`/`ResetYaw`/`ResetMounting`) → calibration updates |
+| `skeleton/mod.rs` | Pose estimation: adjusted tracker rotations → `skeletal_model` FK solve → bone pose |
 | `solarxr/mod.rs` | SolarXR WebSocket server + `DataFeedUpdate` encoder |
 | `main.rs` | Orchestration: spawn servers, run the pose loop |
 

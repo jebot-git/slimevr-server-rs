@@ -16,6 +16,8 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 use tokio::net::UdpSocket;
 
 use super::TrackerRegistry;
+use crate::calibration::Calibration;
+use crate::reset;
 
 /// Server-bound packet type tags (see `firmware_protocol::packet_type` in shora).
 const TAG_HANDSHAKE: i32 = 3;
@@ -25,10 +27,12 @@ const TAG_SENSOR_INFO: i32 = 15;
 /// `u64::from_be_bytes(*b" OVR =D ")`.
 const HANDSHAKE_RESPONSE_SEQ: u64 = 2_328_174_443_102_028_832;
 
-/// Run the tracker UDP server forever, updating `registry`.
+/// Run the tracker UDP server forever, updating `registry` and reacting to user
+/// actions (resets) through `calib`.
 pub async fn run(
     bind: SocketAddr,
     registry: Arc<RwLock<TrackerRegistry>>,
+    calib: Arc<RwLock<Calibration>>,
 ) -> anyhow::Result<()> {
     let socket = UdpSocket::bind(bind).await?;
     tracing::info!("tracker UDP server listening on {bind}");
@@ -89,6 +93,9 @@ pub async fn run(
             }
             SbPacket::UserAction { action } => {
                 tracing::info!(?src, ?action, "tracker user action");
+                let reg = registry.read().unwrap();
+                let mut cal = calib.write().unwrap();
+                reset::handle_user_action(&reg, &mut cal, &action);
             }
             _ => {}
         }

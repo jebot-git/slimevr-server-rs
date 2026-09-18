@@ -7,7 +7,9 @@
 //!
 //! [SlimeVR-Rust]: https://github.com/SlimeVR/SlimeVR-Rust
 
+mod calibration;
 mod config;
+mod reset;
 mod skeleton;
 mod solarxr;
 mod tracker;
@@ -20,6 +22,7 @@ use firmware_protocol::deku::DekuContainerWrite as _;
 use firmware_protocol::{CbPacket, Packet};
 use tokio::net::UdpSocket;
 
+use crate::calibration::Calibration;
 use crate::config::{PING_INTERVAL_SECS, SOLARXR_PORT, TRACKER_PORT};
 use crate::solarxr::Pose;
 use crate::tracker::TrackerRegistry;
@@ -37,11 +40,13 @@ async fn main() -> anyhow::Result<()> {
 
     let registry = Arc::new(RwLock::new(TrackerRegistry::default()));
     let pose: Arc<RwLock<Pose>> = Arc::new(RwLock::new(Pose::default()));
+    let calib: Arc<RwLock<Calibration>> = Arc::new(RwLock::new(Calibration::new()));
 
     // 1. Tracker UDP protocol server ("Hey OVR =D 5").
     let _tracker_task = tokio::spawn(tracker::udp::run(
         SocketAddr::from(([0, 0, 0, 0], TRACKER_PORT)),
         registry.clone(),
+        calib.clone(),
     ));
 
     // 2. SolarXR WebSocket server (WiVRn connects here).
@@ -63,7 +68,10 @@ async fn main() -> anyhow::Result<()> {
         if !trackers.is_empty() {
             tracing::trace!("trackers: {}", trackers.len());
         }
-        let new_pose = skeleton::solve_pose(trackers.into_iter());
+        let new_pose = {
+            let calib = calib.read().unwrap();
+            skeleton::solve_pose(trackers.into_iter(), &calib)
+        };
         *pose.write().unwrap() = new_pose;
     }
 }
