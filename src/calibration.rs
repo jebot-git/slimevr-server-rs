@@ -199,25 +199,27 @@ impl Calibration {
 // ---- Frame alignment (SlimeVR mounting orientations) ----
 //
 // The SlimeVR tracker's sensor frame differs from the bone frame; these constants
-// (vendored from ktmath's `Quaternion.SLIMEVR`) map the two. Each is a 180° rotation
-// about an axis in the XZ plane, matching the tracker's physical mounting.
+// (vendored from ktmath's `Quaternion.SLIMEVR`) map the two. ktmath's constructor is
+// `Quaternion(w, x, y, z)` — scalar first — and each constant is a rotation about the
+// Y axis (yaw), matching the physical mounting orientation.
 
-fn q(x: f32, y: f32, z: f32, w: f32) -> UnitQuaternion<f32> {
+/// Build a unit quaternion from ktmath's `(w, x, y, z)` component order.
+fn q(w: f32, x: f32, y: f32, z: f32) -> UnitQuaternion<f32> {
     UnitQuaternion::new_normalize(Quaternion::new(w, x, y, z))
 }
 
 /// The SlimeVR `defaultMounting()` orientation for a `TrackerPosition` id.
 pub fn default_mounting(position: u8) -> UnitQuaternion<f32> {
     match position {
-        // LEFT_LOWER_ARM, LEFT_HAND, left fingers
+        // LEFT_LOWER_ARM, LEFT_HAND, left fingers → LEFT (90° yaw)
         13 | 17 | 21..=35 => q(0.707, 0.0, 0.707, 0.0),
-        // RIGHT_LOWER_ARM, RIGHT_HAND, right fingers
+        // RIGHT_LOWER_ARM, RIGHT_HAND, right fingers → RIGHT (-90° yaw)
         14 | 18 | 36..=50 => q(0.707, 0.0, -0.707, 0.0),
-        // LEFT_UPPER_ARM, LEFT_LOWER_LEG
+        // LEFT_UPPER_ARM, LEFT_LOWER_LEG → FRONT_LEFT (135° yaw)
         15 | 9 => q(0.383, 0.0, 0.924, 0.0),
-        // RIGHT_UPPER_ARM, RIGHT_LOWER_LEG
+        // RIGHT_UPPER_ARM, RIGHT_LOWER_LEG → FRONT_RIGHT (-135° yaw)
         16 | 10 => q(0.383, 0.0, -0.924, 0.0),
-        // everything else (chest, hip, thighs, feet, neck, …) → FRONT
+        // everything else (chest, hip, thighs, feet, neck, …) → FRONT (180° yaw)
         _ => q(0.0, 0.0, 1.0, 0.0),
     }
 }
@@ -335,31 +337,31 @@ mod tests {
         assert!((yaw_of(&rot_full) - 0.2).abs() < 1e-3, "yaw {}", yaw_of(&rot_full));
     }
 
-    fn assert_mounting(p: u8, x: f32, z: f32) {
+    fn assert_mounting(p: u8, w: f32, x: f32, y: f32, z: f32) {
         let m = default_mounting(p);
+        assert!((m.w - w).abs() < 1e-3, "position {p}: w = {}", m.w);
         assert!((m.i - x).abs() < 1e-3, "position {p}: i = {}", m.i);
-        assert!(m.j.abs() < 1e-4, "position {p}: j = {}", m.j);
+        assert!((m.j - y).abs() < 1e-3, "position {p}: j = {}", m.j);
         assert!((m.k - z).abs() < 1e-3, "position {p}: k = {}", m.k);
-        assert!(m.w.abs() < 1e-4, "position {p}: w = {}", m.w);
     }
 
     #[test]
     fn default_mounting_matches_slimevr() {
-        // chest/hip/thighs/feet → FRONT = (0, 0, 1, 0)
+        // chest/hip/thighs/feet → FRONT = (w=0, x=0, y=1, z=0) = 180° yaw
         for p in [0u8, 4, 6, 7, 8, 11, 12] {
-            assert_mounting(p, 0.0, 1.0);
+            assert_mounting(p, 0.0, 0.0, 1.0, 0.0);
         }
         // left upper arm / left lower leg → FRONT_LEFT = (0.383, 0, 0.924, 0)
-        assert_mounting(15, 0.383, 0.924);
-        assert_mounting(9, 0.383, 0.924);
+        assert_mounting(15, 0.383, 0.0, 0.924, 0.0);
+        assert_mounting(9, 0.383, 0.0, 0.924, 0.0);
         // right upper arm / right lower leg → FRONT_RIGHT = (0.383, 0, -0.924, 0)
-        assert_mounting(16, 0.383, -0.924);
-        assert_mounting(10, 0.383, -0.924);
+        assert_mounting(16, 0.383, 0.0, -0.924, 0.0);
+        assert_mounting(10, 0.383, 0.0, -0.924, 0.0);
         // left forearm/hand → LEFT = (0.707, 0, 0.707, 0)
-        assert_mounting(13, 0.707, 0.707);
-        assert_mounting(17, 0.707, 0.707);
+        assert_mounting(13, 0.707, 0.0, 0.707, 0.0);
+        assert_mounting(17, 0.707, 0.0, 0.707, 0.0);
         // right forearm/hand → RIGHT = (0.707, 0, -0.707, 0)
-        assert_mounting(14, 0.707, -0.707);
-        assert_mounting(18, 0.707, -0.707);
+        assert_mounting(14, 0.707, 0.0, -0.707, 0.0);
+        assert_mounting(18, 0.707, 0.0, -0.707, 0.0);
     }
 }

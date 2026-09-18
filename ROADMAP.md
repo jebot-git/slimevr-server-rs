@@ -58,6 +58,11 @@ dependency chain: nothing above an item can be finished without the items below 
 - [ ] Config file + CLI (ports, bone lengths, tracker assignments).
 - [ ] Tracker body-part assignment (auto + manual), matching the Java server's setup.
 - [ ] Skeleton/pose logging or a lightweight debug UI.
-- [ ] Parity testing against the Java server (feed identical UDP, diff SolarXR output).
+- [~] Parity testing against the Java server — `examples/solarxr_dump` +
+      `examples/tracker_emulate` built; first pass found & fixed a frame-alignment
+      bug (ktmath `Quaternion(w,x,y,z)` order) and identified two remaining gaps:
+      1. bone lengths differ (Java autobones; we use approximate defaults),
+      2. the `skeletal_model` BoneKind set lacks UPPER_CHEST / SHOULDERS / HIPs /
+         HEAD that the Java skeleton emits.
 - [ ] Remove the vendored `solarxr_protocol` in favour of the upstream git dep once
       the version is pinned.

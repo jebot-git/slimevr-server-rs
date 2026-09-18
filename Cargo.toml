@@ -32,5 +32,6 @@ futures-util = "0.3"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+socket2 = { version = "0.5", features = ["all"] }
 # nalgebra 0.32 to interoperate with `vqf`'s quaternion/vector types.
 nalgebra = "0.32"
