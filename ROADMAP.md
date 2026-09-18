@@ -41,9 +41,12 @@ dependency chain: nothing above an item can be finished without the items below 
       orientations (`FRONT`/`LEFT`/`RIGHT`/`FRONT_LEFT`/`FRONT_RIGHT`) via
       `default_mounting(position)`, applied as `mounting_orientation` on SENSOR_INFO.
 - [~] **Bone lengths / proportions.** Height-based autobone is in
-      (`bone_lengths_from_height`, anthropometric ratios at `DEFAULT_HEIGHT_M`).
-      Real per-user autobone optimization (measure actual proportions from
-      movement) is not yet ported.
+      (`bone_lengths_from_height`, anthropometric ratios at `DEFAULT_HEIGHT_M`),
+      plus a per-user autobone (`src/autobone.rs`) that records frames and
+      coordinate-descents the vertical/leg lengths to minimise foot-slide + height
+      error, triggered via `AutoBoneProcessRequest` RPC. This is a simplified port
+      of SlimeVR's `AutoBone` — the full multi-objective error set (slide/offset/
+      proportion/position), recording save/load, and status callbacks are still TODO.
 - [ ] **Smoothing / prediction.** Port the Java server's filtering and pose smoothing.
 
 ## Protocol completeness
