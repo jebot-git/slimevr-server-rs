@@ -60,6 +60,8 @@ async fn main() -> anyhow::Result<()> {
     let _solarxr_task = tokio::spawn(solarxr::run(
         SocketAddr::from(([0, 0, 0, 0], config.solarxr_port)),
         pose.clone(),
+        registry.clone(),
+        calib.clone(),
     ));
 
     // 3. Tracker liveness pings.

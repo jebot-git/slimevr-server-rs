@@ -15,6 +15,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use firmware_protocol::ActionType;
 use solarxr_protocol::data_feed::{
     Bone, BoneArgs, DataFeedMessage, DataFeedMessageHeader, DataFeedMessageHeaderArgs,
     DataFeedUpdate, DataFeedUpdateArgs,
@@ -26,17 +27,29 @@ use solarxr_protocol::pub_sub::{
     PubSubHeader, PubSubHeaderArgs, PubSubUnion, SubscriptionRequest, TopicHandle,
     TopicHandleArgs, TopicId, TopicIdArgs, TopicMapping, TopicMappingArgs,
 };
+use solarxr_protocol::rpc::{
+    ResetRequest, ResetResponse, ResetResponseArgs, ResetStatus, ResetType, RpcMessage,
+    RpcMessageHeader, RpcMessageHeaderArgs,
+};
 use solarxr_protocol::{MessageBundle, MessageBundleArgs};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::calibration::Calibration;
+use crate::reset;
 use crate::skeleton::BonePose;
+use crate::tracker::TrackerRegistry;
 
 /// The current skeleton pose: SolarXR `BodyPart` id → solved bone pose.
 pub type Pose = HashMap<u8, BonePose>;
 
 /// Run the SolarXR WebSocket server forever.
-pub async fn run(bind: SocketAddr, pose: Arc<RwLock<Pose>>) -> anyhow::Result<()> {
+pub async fn run(
+    bind: SocketAddr,
+    pose: Arc<RwLock<Pose>>,
+    registry: Arc<RwLock<TrackerRegistry>>,
+    calib: Arc<RwLock<Calibration>>,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(bind).await?;
     tracing::info!("SolarXR WebSocket server listening on {bind}");
 
@@ -44,19 +57,24 @@ pub async fn run(bind: SocketAddr, pose: Arc<RwLock<Pose>>) -> anyhow::Result<()
         let (stream, peer) = listener.accept().await?;
         tracing::info!(%peer, "SolarXR client connected");
         let pose = pose.clone();
+        let registry = registry.clone();
+        let calib = calib.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, peer, pose).await {
+            if let Err(e) = handle_connection(stream, peer, pose, registry, calib).await {
                 tracing::warn!(%peer, "SolarXR connection ended: {e:#}");
             }
         });
     }
 }
 
-/// Serve one WiVRn connection: handle the handshake and stream the bone feed.
+/// Serve one WiVRn connection: handle the handshake, stream the bone feed, and
+/// react to RPC messages (e.g. resets).
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     peer: SocketAddr,
     pose: Arc<RwLock<Pose>>,
+    registry: Arc<RwLock<TrackerRegistry>>,
+    calib: Arc<RwLock<Calibration>>,
 ) -> anyhow::Result<()> {
     let ws = tokio_tungstenite::accept_async(stream).await?;
     let (mut write, mut read) = ws.split();
@@ -98,6 +116,22 @@ async fn handle_connection(
                                         };
                                         if let Some(bytes) = reply {
                                             let _ = write.send(Message::Binary(bytes)).await;
+                                        }
+                                    }
+                                }
+                                // RPC messages (e.g. reset requests from a GUI/OSC client).
+                                if let Some(msgs) = bundle.rpc_msgs() {
+                                    for i in 0..msgs.len() {
+                                        let h = msgs.get(i);
+                                        if h.message_type() == RpcMessage::ResetRequest {
+                                            if let Some(req) = h.message_as_reset_request() {
+                                                tracing::info!(%peer, "RPC ResetRequest");
+                                                if let Some(bytes) =
+                                                    handle_reset_request(req, &registry, &calib)
+                                                {
+                                                    let _ = write.send(Message::Binary(bytes)).await;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -232,6 +266,59 @@ fn build_topic_mapping_for_topic_id(topic_id: TopicId<'_>) -> Option<Vec<u8>> {
     Some(fbb.finished_data().to_vec())
 }
 
+/// Apply an RPC reset request and build the matching `ResetResponse`.
+fn handle_reset_request(
+    req: ResetRequest<'_>,
+    registry: &Arc<RwLock<TrackerRegistry>>,
+    calib: &Arc<RwLock<Calibration>>,
+) -> Option<Vec<u8>> {
+    let action = match req.reset_type() {
+        ResetType::Yaw => ActionType::ResetYaw,
+        ResetType::Full => ActionType::Reset,
+        ResetType::Mounting => ActionType::ResetMounting,
+        _ => return None,
+    };
+    {
+        let reg = registry.read().unwrap();
+        let mut cal = calib.write().unwrap();
+        reset::handle_user_action(&reg, &mut cal, &action);
+    }
+    Some(build_reset_response(req.reset_type()))
+}
+
+/// Build a `MessageBundle` containing an `RpcMessageHeader` + `ResetResponse`.
+fn build_reset_response(reset_type: ResetType) -> Vec<u8> {
+    let mut fbb = flatbuffers::FlatBufferBuilder::new();
+    let resp = ResetResponse::create(
+        &mut fbb,
+        &ResetResponseArgs {
+            reset_type,
+            status: ResetStatus::FINISHED,
+            body_parts: None,
+            progress: 0,
+            duration: 0,
+        },
+    );
+    let header = RpcMessageHeader::create(
+        &mut fbb,
+        &RpcMessageHeaderArgs {
+            tx_id: None,
+            message_type: RpcMessage::ResetResponse,
+            message: Some(flatbuffers::WIPOffset::new(resp.value())),
+        },
+    );
+    let msgs = fbb.create_vector(&[header]);
+    let bundle = MessageBundle::create(
+        &mut fbb,
+        &MessageBundleArgs {
+            rpc_msgs: Some(msgs),
+            ..Default::default()
+        },
+    );
+    fbb.finish(bundle, None);
+    fbb.finished_data().to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,5 +348,20 @@ mod tests {
         let bones = update.bones().unwrap();
         assert_eq!(bones.len(), 1);
         assert_eq!(bones.get(0).body_part(), BodyPart(3));
+    }
+
+    #[test]
+    fn reset_response_round_trips() {
+        let bytes = build_reset_response(ResetType::Full);
+        let bundle = flatbuffers::root::<MessageBundle>(&bytes).unwrap();
+
+        let msgs = bundle.rpc_msgs().unwrap();
+        assert_eq!(msgs.len(), 1);
+        let header = msgs.get(0);
+        assert_eq!(header.message_type(), RpcMessage::ResetResponse);
+
+        let resp = header.message_as_reset_response().unwrap();
+        assert_eq!(resp.reset_type(), ResetType::Full);
+        assert_eq!(resp.status(), ResetStatus::FINISHED);
     }
 }

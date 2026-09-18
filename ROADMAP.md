@@ -50,8 +50,9 @@ dependency chain: nothing above an item can be finished without the items below 
 - [x] **Bone feed (`bone_mask`).** Emit `DataFeedUpdate.bones` (`Bone` with
       `rotation_g` + `head_position_g` + `body_part` + `bone_length`) instead of
       synthetic trackers.
-- [ ] **RPC surface.** Reset/calibration, tracker assignment, status, settings,
-      serial, autobone, etc. — the `rpc/` and remaining `pub_sub/` message families.
+- [~] **RPC surface.** Reset RPC is handled over SolarXR (`ResetRequest` →
+      full/yaw/mounting reset + `ResetResponse`). Assignment, status, settings,
+      serial, and autobone RPCs are still TODO.
 - [~] **Tracker management.** SENSOR_INFO sensor-id/position handling and
       disconnect/timeout cleanup (configurable `tracker_timeout_secs`) are in.
       Multi-sensor trackers and SENSOR_INFO status handling are still TODO.
