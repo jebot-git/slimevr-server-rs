@@ -1,33 +1,174 @@
-//! Tracker → skeleton calibration: mounting offsets and the global heading.
+//! Tracker → skeleton calibration: standing (full) reset, mounting reset, yaw
+//! reset, and yaw-drift compensation. Ported from the Java server's
+//! `TrackerResetsHandler` (simplified: no arm/T-pose modes, no HMD special-casing).
 //!
-//! A tracker's raw rotation is in its own gravity-aligned sensor frame. Before it
-//! can drive a bone it must be transformed into the bone's global frame:
+//! Each tracker carries its own set of corrective rotations. The adjustment chain,
+//! matching the Java `adjustToReference` + `adjustToDrift`, is:
 //!
 //! ```text
-//! bone_rot = heading * raw_rot * mounting_offset
+//! adjusted = drift * (yaw_fix * mount_rot_fix⁻¹ * (attachment_fix → gyro_fix →
+//!             mounting_orientation → raw) * mount_rot_fix)
 //! ```
 //!
-//! * `mounting_offset` maps the tracker's sensor frame onto the bone (constant once
-//!   the tracker is strapped on). It is (re)computed by a **mounting reset**, which
-//!   also implicitly absorbs any sensor↔global frame difference, since both the raw
-//!   rotation and the bone's calibration rotation share gravity "up".
-//! * `heading` is a yaw-only correction computed by a **full reset** from a reference
-//!   tracker (head/chest), aligning the skeleton's forward with that reference.
+//! Concretely, in order: `rot = raw * mounting_orientation`, `rot = gyro_fix * rot`,
+//! `rot *= attachment_fix`, `rot = mount_rot_fix⁻¹ * rot * mount_rot_fix`,
+//! `rot = yaw_fix * rot`, then drift is applied on top.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use nalgebra::{UnitQuaternion, Vector3};
 
 /// A MAC address identifying a tracker.
 pub type Mac = [u8; 6];
 
-/// Per-tracker mounting offsets + a global heading correction.
+/// Yaw-drift compensation: records the yaw drift between resets and applies a
+/// gradually-ramping correction (a simplified form of the Java `calculateDrift`).
+#[derive(Debug, Default)]
+pub struct DriftCompensator {
+    /// Whether drift compensation is active.
+    pub enabled: bool,
+    /// Correction amount (0..1, the Java `driftCompensationConfig.amount`).
+    pub amount: f32,
+    /// Latest recorded yaw-drift quaternion.
+    drift_quat: UnitQuaternion<f32>,
+    /// Duration (s) of the interval the latest drift was measured over.
+    drift_duration: f32,
+    /// When the last reset happened.
+    since: Option<Instant>,
+}
+
+impl DriftCompensator {
+    fn new() -> Self {
+        Self {
+            enabled: false,
+            amount: 0.5,
+            drift_quat: UnitQuaternion::identity(),
+            drift_duration: 0.0,
+            since: None,
+        }
+    }
+
+    /// Record the yaw drift between the pre-reset (`before`) and post-reset (`after`)
+    /// reference-adjusted rotations.
+    fn record(&mut self, before: &UnitQuaternion<f32>, after: &UnitQuaternion<f32>) {
+        if !self.enabled {
+            self.since = Some(Instant::now());
+            return;
+        }
+        let drift = yaw_quat_of(after) * yaw_quat_of(before).inverse();
+        let dt = self.since.map(|s| s.elapsed().as_secs_f32()).unwrap_or(0.0);
+        self.drift_quat = drift;
+        self.drift_duration = dt;
+        self.since = Some(Instant::now());
+    }
+
+    /// Apply the ramping drift correction to a rotation.
+    fn apply(&self, rot: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+        if !self.enabled || self.drift_duration <= 0.0 {
+            return rot;
+        }
+        let elapsed = self.since.map(|s| s.elapsed().as_secs_f32()).unwrap_or(0.0);
+        let ratio = (elapsed / self.drift_duration).clamp(0.0, 1.0);
+        quat_pow(&self.drift_quat, self.amount * ratio) * rot
+    }
+}
+
+/// Per-tracker calibration state.
+#[derive(Debug)]
+pub struct TrackerCalibration {
+    /// Fixed mounting orientation (tracker frame → bone frame). The SlimeVR
+    /// `HalfHorizontal`/`defaultMounting` conventions are a TODO; identity for now.
+    pub mounting_orientation: UnitQuaternion<f32>,
+    gyro_fix: UnitQuaternion<f32>,
+    attachment_fix: UnitQuaternion<f32>,
+    mount_rot_fix: UnitQuaternion<f32>,
+    yaw_fix: UnitQuaternion<f32>,
+    drift: DriftCompensator,
+}
+
+impl Default for TrackerCalibration {
+    fn default() -> Self {
+        Self {
+            mounting_orientation: UnitQuaternion::identity(),
+            gyro_fix: UnitQuaternion::identity(),
+            attachment_fix: UnitQuaternion::identity(),
+            mount_rot_fix: UnitQuaternion::identity(),
+            yaw_fix: UnitQuaternion::identity(),
+            drift: DriftCompensator::new(),
+        }
+    }
+}
+
+impl TrackerCalibration {
+    /// Full reset (standing): zero this tracker's yaw/pitch/roll against `reference`.
+    pub fn full_reset(&mut self, raw: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) {
+        let before = self.adjust_reference(raw);
+        let mounting_adjusted = raw * self.mounting_orientation;
+
+        self.gyro_fix = inverse_yaw(&mounting_adjusted);
+        self.attachment_fix = (self.gyro_fix * mounting_adjusted).inverse();
+        self.yaw_fix = self.fix_yaw(mounting_adjusted, reference);
+
+        let after = self.adjust_reference(raw);
+        self.drift.record(&before, &after);
+    }
+
+    /// Yaw reset: align only the yaw to `reference`.
+    pub fn yaw_reset(&mut self, raw: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) {
+        let before = self.adjust_reference(raw);
+        self.yaw_fix = self.fix_yaw(raw * self.mounting_orientation, reference);
+        let after = self.adjust_reference(raw);
+        self.drift.record(&before, &after);
+    }
+
+    /// Mounting reset (skip pose): compute the yaw-only axis alignment.
+    pub fn mounting_reset(&mut self, raw: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) {
+        let before = self.adjust_reference(raw);
+
+        let mut rot = raw * self.mounting_orientation;
+        rot = self.gyro_fix * rot;
+        rot = rot * self.attachment_fix;
+        rot = self.yaw_fix * rot;
+        rot = reference_yaw(&reference).inverse() * rot;
+
+        let up = rot * Vector3::y();
+        let yaw_angle = up.x.atan2(up.z);
+        self.mount_rot_fix = yaw_quat(yaw_angle);
+
+        let after = self.adjust_reference(raw);
+        self.drift.record(&before, &after);
+    }
+
+    /// The corrected bone rotation: reference fixes then drift.
+    pub fn adjust(&self, raw: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+        self.drift.apply(self.adjust_reference(raw))
+    }
+
+    /// The reference-adjustment chain (without drift).
+    fn adjust_reference(&self, raw: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+        let mut rot = raw * self.mounting_orientation;
+        rot = self.gyro_fix * rot;
+        rot = rot * self.attachment_fix;
+        rot = self.mount_rot_fix.inverse() * (rot * self.mount_rot_fix);
+        rot = self.yaw_fix * rot;
+        rot
+    }
+
+    /// Port of the Java `fixYaw`.
+    fn fix_yaw(&self, sensor: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+        let mut rot = self.gyro_fix * sensor;
+        rot = rot * self.attachment_fix;
+        rot = self.mount_rot_fix.inverse() * (rot * self.mount_rot_fix);
+        let yaw = yaw_quat_of(&rot);
+        yaw.inverse() * reference_yaw(&reference)
+    }
+}
+
+/// The set of per-tracker calibrations, keyed by MAC.
 #[derive(Default)]
 pub struct Calibration {
-    /// `tracker frame → bone frame` offset, keyed by tracker MAC.
-    mounting: HashMap<Mac, UnitQuaternion<f32>>,
-    /// Global yaw correction from the last full reset. Identity = uncalibrated.
-    heading: UnitQuaternion<f32>,
+    trackers: HashMap<Mac, TrackerCalibration>,
 }
 
 impl Calibration {
@@ -35,86 +176,130 @@ impl Calibration {
         Self::default()
     }
 
-    /// Full reset: align the skeleton's forward with `reference` (the head/chest
-    /// tracker's current rotation). Only the yaw component is used.
-    pub fn full_reset(&mut self, reference: UnitQuaternion<f32>) {
-        self.heading = inverse_yaw(&reference);
-    }
-
-    /// Yaw reset: identical to a full reset for heading purposes (recenter).
-    pub fn yaw_reset(&mut self, reference: UnitQuaternion<f32>) {
-        self.full_reset(reference);
-    }
-
-    /// Mounting reset for one tracker: compute its `tracker → bone` offset so that,
-    /// in the calibration pose, `raw * offset` equals the bone's expected orientation
-    /// `bone_calib`.
-    pub fn mounting_reset(
-        &mut self,
-        mac: Mac,
-        raw: UnitQuaternion<f32>,
-        bone_calib: UnitQuaternion<f32>,
-    ) {
-        let offset = raw.inverse() * bone_calib;
-        self.mounting.insert(mac, offset);
-    }
-
-    /// Adjust a tracker's raw rotation into its bone's global rotation.
+    /// The corrected bone rotation for a tracker.
     pub fn adjust(&self, mac: Mac, raw: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
-        let offset = self
-            .mounting
+        self.trackers
             .get(&mac)
-            .copied()
-            .unwrap_or_else(UnitQuaternion::identity);
-        self.heading * raw * offset
+            .map(|t| t.adjust(raw))
+            .unwrap_or(raw)
+    }
+
+    /// Get (or create) a tracker's calibration state.
+    pub fn tracker_mut(&mut self, mac: Mac) -> &mut TrackerCalibration {
+        self.trackers.entry(mac).or_default()
     }
 }
 
-/// The inverse of a rotation's yaw component (rotation about the global `+Y` axis).
+// ---- Yaw helpers ----
+//
+// "Yaw" here is the heading: the direction the forward vector (-Z) points in the
+// horizontal XZ plane. `+X` right, `+Y` up, `-Z` forward.
+
+fn yaw_of(q: &UnitQuaternion<f32>) -> f32 {
+    let f = q * Vector3::new(0.0, 0.0, -1.0);
+    (-f.x).atan2(-f.z)
+}
+
+fn yaw_quat(a: f32) -> UnitQuaternion<f32> {
+    UnitQuaternion::from_axis_angle(&Vector3::y_axis(), a)
+}
+
+fn yaw_quat_of(q: &UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+    yaw_quat(yaw_of(q))
+}
+
 fn inverse_yaw(q: &UnitQuaternion<f32>) -> UnitQuaternion<f32> {
-    let (_, _, yaw) = q.euler_angles();
-    UnitQuaternion::from_axis_angle(&Vector3::y_axis(), -yaw)
+    yaw_quat(-yaw_of(q))
+}
+
+fn reference_yaw(q: &UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+    yaw_quat_of(q)
+}
+
+/// Fractional power of a unit quaternion (same axis, angle scaled by `t`).
+fn quat_pow(q: &UnitQuaternion<f32>, t: f32) -> UnitQuaternion<f32> {
+    match q.axis_angle() {
+        Some((axis, angle)) => UnitQuaternion::from_axis_angle(&axis, angle * t),
+        None => UnitQuaternion::identity(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn yaw_close(a: &UnitQuaternion<f32>, b: &UnitQuaternion<f32>, eps: f32) -> bool {
+        (yaw_of(a) - yaw_of(b)).abs() < eps
+    }
+
     #[test]
-    fn mounting_reset_makes_bone_match_calib() {
-        let mut c = Calibration::new();
-        let mac = [1u8; 6];
-        // Tracker mounted at some arbitrary offset.
+    fn full_reset_aligns_to_reference_yaw() {
+        let raw = yaw_quat(1.2) * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), 0.3);
+        let reference = yaw_quat(0.1);
+
+        let mut c = TrackerCalibration::default();
+        c.full_reset(raw, reference);
+
+        // After full reset, the tracker's yaw matches the reference's yaw.
+        let adjusted = c.adjust(raw);
+        assert!(yaw_close(&adjusted, &reference, 1e-4), "adjusted yaw {}", yaw_of(&adjusted));
+    }
+
+    #[test]
+    fn full_reset_removes_pitch_and_roll() {
+        // A tracker mounted with pitch + roll, but standing upright: full reset
+        // should zero those out (relative to gravity "up").
         let raw = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), 0.4)
-            * UnitQuaternion::from_axis_angle(&Vector3::z_axis(), -0.3);
-        let bone_calib = UnitQuaternion::identity();
+            * UnitQuaternion::from_axis_angle(&Vector3::z_axis(), -0.25);
+        let reference = UnitQuaternion::identity();
 
-        c.mounting_reset(mac, raw, bone_calib);
-        let adjusted = c.adjust(mac, raw);
+        let mut c = TrackerCalibration::default();
+        c.full_reset(raw, reference);
 
-        // Heading is identity (no full reset), so adjusted == bone_calib.
-        let angle = adjusted.angle_to(&bone_calib);
-        assert!(angle.abs() < 1e-5, "angle = {angle}");
+        let adjusted = c.adjust(raw);
+        // The rotated up vector should be ~straight up (pitch/roll removed).
+        let up = adjusted * Vector3::y();
+        assert!((up - Vector3::y()).norm() < 1e-3, "up = {up:?}");
     }
 
     #[test]
-    fn full_reset_cancels_reference_yaw() {
-        let mut c = Calibration::new();
-        let mac = [2u8; 6];
-        let raw = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), 0.9);
+    fn yaw_reset_only_changes_yaw() {
+        let raw = yaw_quat(2.0);
+        let reference = yaw_quat(-0.5);
 
-        c.full_reset(raw);
-        let adjusted = c.adjust(mac, raw); // no mounting offset yet
+        let mut c = TrackerCalibration::default();
+        c.yaw_reset(raw, reference);
 
-        let (_, _, yaw) = adjusted.euler_angles();
-        assert!(yaw.abs() < 1e-5, "yaw = {yaw}");
+        let adjusted = c.adjust(raw);
+        assert!(yaw_close(&adjusted, &reference, 1e-4));
     }
 
     #[test]
-    fn inverse_yaw_leaves_only_non_yaw() {
-        let q = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), 0.7)
-            * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), 0.3);
-        let (_, _, yaw) = (inverse_yaw(&q) * q).euler_angles();
-        assert!(yaw.abs() < 1e-5, "yaw = {yaw}");
+    fn drift_ramps_in() {
+        let mut d = DriftCompensator::new();
+        d.enabled = true;
+        d.amount = 1.0;
+
+        // Drift of 0.2 rad over a 2 s interval.
+        let before = UnitQuaternion::identity();
+        let after = yaw_quat(0.2);
+        // Simulate a 2 s interval since the previous reset.
+        d.since = Some(Instant::now() - std::time::Duration::from_secs(2));
+        d.record(&before, &after);
+
+        // Immediately after reset: no correction yet.
+        let rot0 = d.apply(yaw_quat(0.0));
+        assert!(yaw_of(&rot0).abs() < 1e-4);
+
+        // At full ratio (>= 2 s later) the full drift is applied.
+        let d2 = DriftCompensator {
+            enabled: true,
+            amount: 1.0,
+            drift_quat: d.drift_quat,
+            drift_duration: d.drift_duration,
+            since: Some(Instant::now() - std::time::Duration::from_secs(3)),
+        };
+        let rot_full = d2.apply(yaw_quat(0.0));
+        assert!((yaw_of(&rot_full) - 0.2).abs() < 1e-3, "yaw {}", yaw_of(&rot_full));
     }
 }

@@ -74,14 +74,6 @@ fn default_bone_lengths() -> BoneMap<f32> {
     m
 }
 
-/// The expected global orientation of a bone in the standing calibration pose
-/// (nalgebra 0.32). Used as the `bone_calib` target of a mounting reset.
-pub fn bone_calibration_rotation(position: u8) -> Option<UnitQuaternion<f32>> {
-    let bone = bone_kind_for_position(position)?;
-    let q = bone.calibration_rotation().0; // nalgebra 0.31 UnitQuaternion
-    Some(UnitQuaternion::from_quaternion(Quaternion::new(q.w, q.i, q.j, q.k)))
-}
-
 /// Build a [`Skeleton`] with default bone lengths.
 fn build_skeleton() -> Skeleton {
     Skeleton::new(&SkeletonConfig::new(default_bone_lengths()))

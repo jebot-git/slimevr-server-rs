@@ -57,6 +57,7 @@ impl TrackerRegistry {
     }
 
     /// Resolve a tracker by (addr, sensor_id).
+    #[allow(dead_code)] // read accessor for future tracker-management code
     pub fn get(&self, addr: SocketAddr, sensor_id: u8) -> Option<&Tracker> {
         self.by_socket
             .get(&(addr, sensor_id))

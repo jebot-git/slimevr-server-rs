@@ -8,6 +8,3 @@ pub const SOLARXR_PORT: u16 = 21110;
 
 /// How often the server sends a ping to each tracker (liveness check).
 pub const PING_INTERVAL_SECS: u64 = 10;
-
-/// How long before a tracker that stopped responding is considered lost.
-pub const TRACKER_TIMEOUT_SECS: u64 = 30;

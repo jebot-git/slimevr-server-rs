@@ -20,7 +20,6 @@ use crate::calibration::Calibration;
 use crate::reset;
 
 /// Server-bound packet type tags (see `firmware_protocol::packet_type` in shora).
-const TAG_HANDSHAKE: i32 = 3;
 const TAG_SENSOR_INFO: i32 = 15;
 
 /// Sequence number of the server's `"Hey OVR =D 5"` handshake response.
