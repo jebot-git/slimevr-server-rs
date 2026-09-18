@@ -21,6 +21,10 @@ pub fn bone_kind_for_position(position: u8) -> Option<BoneKind> {
         6 => BoneKind::Hip,
         7 => BoneKind::ThighL,
         8 => BoneKind::ThighR,
+        // The HaritoraX 2 "ankle" tracker sits on the shin (lower leg).
+        9 => BoneKind::AnkleL,
+        10 => BoneKind::AnkleR,
+        // Real foot trackers (expansion set).
         11 => BoneKind::FootL,
         12 => BoneKind::FootR,
         15 => BoneKind::UpperArmL,
@@ -33,15 +37,20 @@ pub fn bone_kind_for_position(position: u8) -> Option<BoneKind> {
 pub fn body_part_for_bone(bone: BoneKind) -> Option<u8> {
     Some(match bone {
         BoneKind::Neck => 2,
+        BoneKind::UpperChest => 22,
         BoneKind::Chest => 3,
         BoneKind::Waist => 4,
         BoneKind::Hip => 5,
+        BoneKind::HipL => 23,
+        BoneKind::HipR => 24,
         BoneKind::ThighL => 6,
         BoneKind::ThighR => 7,
         BoneKind::AnkleL => 8,
         BoneKind::AnkleR => 9,
         BoneKind::FootL => 10,
         BoneKind::FootR => 11,
+        BoneKind::ShoulderL => 20,
+        BoneKind::ShoulderR => 21,
         BoneKind::UpperArmL => 16,
         BoneKind::UpperArmR => 17,
         BoneKind::ForearmL => 14,
@@ -56,15 +65,20 @@ pub fn body_part_for_bone(bone: BoneKind) -> Option<u8> {
 fn default_bone_lengths() -> BoneMap<f32> {
     let mut m = BoneMap::new([0.0f32; BoneKind::NUM_TYPES]);
     m[BoneKind::Neck] = 0.10;
+    m[BoneKind::UpperChest] = 0.15;
     m[BoneKind::Chest] = 0.22;
     m[BoneKind::Waist] = 0.10;
     m[BoneKind::Hip] = 0.10;
+    m[BoneKind::HipL] = 0.10;
+    m[BoneKind::HipR] = 0.10;
     m[BoneKind::ThighL] = 0.45;
     m[BoneKind::ThighR] = 0.45;
     m[BoneKind::AnkleL] = 0.42;
     m[BoneKind::AnkleR] = 0.42;
     m[BoneKind::FootL] = 0.07;
     m[BoneKind::FootR] = 0.07;
+    m[BoneKind::ShoulderL] = 0.15;
+    m[BoneKind::ShoulderR] = 0.15;
     m[BoneKind::UpperArmL] = 0.30;
     m[BoneKind::UpperArmR] = 0.30;
     m[BoneKind::ForearmL] = 0.26;
@@ -138,6 +152,8 @@ mod tests {
         assert_eq!(bone_kind_for_position(6), Some(BoneKind::Hip));
         assert_eq!(bone_kind_for_position(7), Some(BoneKind::ThighL));
         assert_eq!(bone_kind_for_position(8), Some(BoneKind::ThighR));
+        assert_eq!(bone_kind_for_position(9), Some(BoneKind::AnkleL));
+        assert_eq!(bone_kind_for_position(10), Some(BoneKind::AnkleR));
         assert_eq!(bone_kind_for_position(11), Some(BoneKind::FootL));
         assert_eq!(bone_kind_for_position(12), Some(BoneKind::FootR));
         assert_eq!(bone_kind_for_position(15), Some(BoneKind::UpperArmL));
@@ -167,9 +183,11 @@ mod tests {
             last_seen: std::time::Instant::now(),
         };
         let pose = solve_pose(std::iter::once(t), &Calibration::new());
-        // All 16 bones map to a SolarXR body part.
-        assert_eq!(pose.len(), 16);
+        // All 21 bones map to a SolarXR body part.
+        assert_eq!(pose.len(), 21);
         assert!(pose.contains_key(&3)); // chest
         assert!(pose.contains_key(&10)); // left foot (filled by FK)
+        assert!(pose.contains_key(&22)); // upper chest
+        assert!(pose.contains_key(&23)); // left hip
     }
 }

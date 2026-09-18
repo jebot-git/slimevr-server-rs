@@ -122,9 +122,10 @@ mod tests {
 		s.solve().unwrap();
 
 		assert_relative_eq!(s.bone_output_pos(BoneKind::Neck), Point::new(0.0, -1.0, 0.0));
-		assert_relative_eq!(s.bone_output_pos(BoneKind::Chest), Point::new(0.0, -2.0, 0.0));
-		assert_relative_eq!(s.bone_output_pos(BoneKind::Waist), Point::new(0.0, -3.0, 0.0));
-		assert_relative_eq!(s.bone_output_pos(BoneKind::Hip), Point::new(0.0, -4.0, 0.0));
+		assert_relative_eq!(s.bone_output_pos(BoneKind::UpperChest), Point::new(0.0, -2.0, 0.0));
+		assert_relative_eq!(s.bone_output_pos(BoneKind::Chest), Point::new(0.0, -3.0, 0.0));
+		assert_relative_eq!(s.bone_output_pos(BoneKind::Waist), Point::new(0.0, -4.0, 0.0));
+		assert_relative_eq!(s.bone_output_pos(BoneKind::Hip), Point::new(0.0, -5.0, 0.0));
 	}
 
 	/// A pinned chest rotation propagates to the untracked descendants.

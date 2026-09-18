@@ -38,9 +38,12 @@ use crate::{
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, FromPrimitive, ToPrimitive)]
 pub enum BoneKind {
 	Neck = 0,
+	UpperChest,
 	Chest,
 	Waist,
 	Hip,
+	HipL,
+	HipR,
 	ThighL,
 	ThighR,
 	AnkleL,
@@ -48,6 +51,8 @@ pub enum BoneKind {
 	FootL,
 	FootR,
 
+	ShoulderL,
+	ShoulderR,
 	UpperArmL,
 	UpperArmR,
 	ForearmL,
@@ -89,10 +94,13 @@ impl BoneKind {
 	pub const fn children(&self) -> &'static [Self] {
 		use BoneKind::*;
 		match self {
-			Neck => &[Chest, UpperArmL, UpperArmR],
+			Neck => &[UpperChest],
+			UpperChest => &[Chest, ShoulderL, ShoulderR],
 			Chest => &[Waist],
 			Waist => &[Hip],
-			Hip => &[ThighL, ThighR],
+			Hip => &[HipL, HipR],
+			HipL => &[ThighL],
+			HipR => &[ThighR],
 			ThighL => &[AnkleL],
 			ThighR => &[AnkleR],
 			AnkleL => &[FootL],
@@ -100,6 +108,8 @@ impl BoneKind {
 			FootL => &[],
 			FootR => &[],
 
+			ShoulderL => &[UpperArmL],
+			ShoulderR => &[UpperArmR],
 			UpperArmL => &[ForearmL],
 			UpperArmR => &[ForearmR],
 			ForearmL => &[WristL],
@@ -114,18 +124,23 @@ impl BoneKind {
 		use BoneKind::*;
 		Some(match self {
 			Neck => return None,
-			Chest => Neck,
+			UpperChest => Neck,
+			Chest => UpperChest,
 			Waist => Chest,
 			Hip => Waist,
-			ThighL => Hip,
-			ThighR => Hip,
+			HipL => Hip,
+			HipR => Hip,
+			ThighL => HipL,
+			ThighR => HipR,
 			AnkleL => ThighL,
 			AnkleR => ThighR,
 			FootL => AnkleL,
 			FootR => AnkleR,
 
-			UpperArmL => Neck,
-			UpperArmR => Neck,
+			ShoulderL => UpperChest,
+			ShoulderR => UpperChest,
+			UpperArmL => ShoulderL,
+			UpperArmR => ShoulderR,
 			ForearmL => UpperArmL,
 			ForearmR => UpperArmR,
 			WristL => ForearmL,
