@@ -1,20 +1,21 @@
-//! SolarXR WebSocket server — the WiVRn-facing skeleton output.
+//! SolarXR IPC server — the WiVRn-facing skeleton output.
 //!
-//! WiVRn's built-in SolarXR driver connects here (port 21110) as a SolarXR
-//! *client*. SlimeVR-Rust's `solarxr` crate is client-only, so this module
-//! implements the *server* half from scratch on top of the vendored
-//! `solarxr_protocol` FlatBuffers bindings.
+//! WiVRn's built-in SolarXR driver connects to the SlimeVR server over a Unix
+//! domain socket (`/run/user/1000/SlimeVRRpc`) and speaks the SolarXR
+//! `MessageBundle` protocol, framed as a 4-byte little-endian length prefix
+//! (the length includes the 4 prefix bytes) followed by the FlatBuffers payload.
+//! This mirrors the Java server's `UnixSocketRpcBridge` framing.
 //!
 //! Handshake: the client sends a `StartDataFeed` (with `bone_mask: true`) and may
 //! send a `SubscriptionRequest`; we reply with a `TopicMapping` and then stream
 //! `DataFeedUpdate` messages containing one `Bone` per body part.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::io;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
 use firmware_protocol::ActionType;
 use solarxr_protocol::data_feed::{
     Bone, BoneArgs, DataFeedMessage, DataFeedMessageHeader, DataFeedMessageHeaderArgs,
@@ -29,11 +30,11 @@ use solarxr_protocol::pub_sub::{
 };
 use solarxr_protocol::rpc::{
     ResetRequest, ResetResponse, ResetResponseArgs, ResetStatus, ResetType, RpcMessage,
-    RpcMessageHeader, RpcMessageHeaderArgs,
+    RpcMessageHeader, RpcMessageHeaderArgs, SettingsResponse, SettingsResponseArgs,
 };
 use solarxr_protocol::{MessageBundle, MessageBundleArgs};
-use tokio::net::TcpListener;
-use tokio_tungstenite::tungstenite::Message;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{UnixListener, UnixStream};
 
 use crate::calibration::Calibration;
 use crate::reset;
@@ -43,41 +44,56 @@ use crate::tracker::TrackerRegistry;
 /// The current skeleton pose: SolarXR `BodyPart` id → solved bone pose.
 pub type Pose = HashMap<u8, BonePose>;
 
-/// Run the SolarXR WebSocket server forever.
+/// Run the SolarXR IPC server (Unix domain socket) forever.
 pub async fn run(
-    bind: SocketAddr,
+    path: String,
     pose: Arc<RwLock<Pose>>,
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
 ) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(bind).await?;
-    tracing::info!("SolarXR WebSocket server listening on {bind}");
+    let listener = bind_unix_socket(&path).await?;
+    tracing::info!("SolarXR IPC socket listening on {path}");
 
     loop {
-        let (stream, peer) = listener.accept().await?;
-        tracing::info!(%peer, "SolarXR client connected");
+        let (stream, _peer) = listener.accept().await?;
+        tracing::info!("SolarXR client connected");
         let pose = pose.clone();
         let registry = registry.clone();
         let calib = calib.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, peer, pose, registry, calib).await {
-                tracing::warn!(%peer, "SolarXR connection ended: {e:#}");
+            if let Err(e) = handle_connection(stream, pose, registry, calib).await {
+                tracing::warn!("SolarXR connection ended: {e:#}");
             }
         });
     }
 }
 
+/// Bind a Unix domain socket, removing a stale socket file if one is present.
+async fn bind_unix_socket(path: &str) -> anyhow::Result<UnixListener> {
+    let p = Path::new(path);
+    if p.exists() {
+        // If a live server owns the socket, a connect attempt succeeds; otherwise
+        // the socket file is stale and safe to remove.
+        match UnixStream::connect(p).await {
+            Ok(_) => anyhow::bail!("SolarXR socket {path:?} is already in use"),
+            Err(_) => {
+                tracing::warn!("removing stale SolarXR socket {path:?}");
+                std::fs::remove_file(p)?;
+            }
+        }
+    }
+    Ok(UnixListener::bind(p)?)
+}
+
 /// Serve one WiVRn connection: handle the handshake, stream the bone feed, and
 /// react to RPC messages (e.g. resets).
 async fn handle_connection(
-    stream: tokio::net::TcpStream,
-    peer: SocketAddr,
+    stream: UnixStream,
     pose: Arc<RwLock<Pose>>,
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
 ) -> anyhow::Result<()> {
-    let ws = tokio_tungstenite::accept_async(stream).await?;
-    let (mut write, mut read) = ws.split();
+    let (mut read, mut write) = stream.into_split();
 
     let mut streaming = false;
     let mut tick = tokio::time::interval(Duration::from_millis(33)); // ~30 Hz
@@ -85,18 +101,28 @@ async fn handle_connection(
 
     loop {
         tokio::select! {
-            msg = read.next() => {
+            msg = read_message(&mut read) => {
                 match msg {
-                    Some(Ok(Message::Binary(data))) => {
+                    Ok(Some(data)) => {
                         match flatbuffers::root::<MessageBundle>(&data) {
                             Ok(bundle) => {
-                                // StartDataFeed → begin streaming.
+                                // StartDataFeed → begin streaming; PollDataFeed → one-shot reply.
                                 if let Some(msgs) = bundle.data_feed_msgs() {
                                     for i in 0..msgs.len() {
                                         let h = msgs.get(i);
-                                        if h.message_type() == DataFeedMessage::StartDataFeed {
-                                            streaming = true;
-                                            tracing::info!(%peer, "SolarXR StartDataFeed received; streaming bones");
+                                        match h.message_type() {
+                                            DataFeedMessage::StartDataFeed => {
+                                                streaming = true;
+                                                tracing::info!("SolarXR StartDataFeed received; streaming bones");
+                                            }
+                                            DataFeedMessage::PollDataFeed => {
+                                                tracing::debug!("SolarXR PollDataFeed received; sending update");
+                                                let pose = pose.read().unwrap().clone();
+                                                if let Some(bytes) = build_bone_feed(&pose) {
+                                                    let _ = write_message(&mut write, &bytes).await;
+                                                }
+                                            }
+                                            _ => {}
                                         }
                                     }
                                 }
@@ -115,34 +141,42 @@ async fn handle_connection(
                                             _ => None,
                                         };
                                         if let Some(bytes) = reply {
-                                            let _ = write.send(Message::Binary(bytes)).await;
+                                            let _ = write_message(&mut write, &bytes).await;
                                         }
                                     }
                                 }
-                                // RPC messages (e.g. reset requests from a GUI/OSC client).
+                                // RPC messages (reset + settings requests from the client).
                                 if let Some(msgs) = bundle.rpc_msgs() {
                                     for i in 0..msgs.len() {
                                         let h = msgs.get(i);
-                                        if h.message_type() == RpcMessage::ResetRequest {
-                                            if let Some(req) = h.message_as_reset_request() {
-                                                tracing::info!(%peer, "RPC ResetRequest");
-                                                if let Some(bytes) =
-                                                    handle_reset_request(req, &registry, &calib)
-                                                {
-                                                    let _ = write.send(Message::Binary(bytes)).await;
+                                        match h.message_type() {
+                                            RpcMessage::ResetRequest => {
+                                                if let Some(req) = h.message_as_reset_request() {
+                                                    tracing::info!("RPC ResetRequest");
+                                                    if let Some(bytes) =
+                                                        handle_reset_request(req, &registry, &calib)
+                                                    {
+                                                        let _ = write_message(&mut write, &bytes).await;
+                                                    }
                                                 }
                                             }
+                                            RpcMessage::SettingsRequest => {
+                                                tracing::debug!("RPC SettingsRequest");
+                                                let _ =
+                                                    write_message(&mut write, &build_settings_response())
+                                                        .await;
+                                            }
+                                            _ => {}
                                         }
                                     }
                                 }
                             }
-                            Err(e) => tracing::debug!(%peer, "non-SolarXR binary frame: {e}"),
+                            Err(e) => tracing::debug!("non-SolarXR frame: {e}"),
                         }
                     }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(_)) => {}
-                    Some(Err(e)) => {
-                        tracing::debug!(%peer, "SolarXR ws error: {e}");
+                    Ok(None) => break, // clean EOF
+                    Err(e) => {
+                        tracing::debug!("SolarXR read error: {e}");
                         break;
                     }
                 }
@@ -151,7 +185,7 @@ async fn handle_connection(
                 if streaming {
                     let pose = pose.read().unwrap().clone();
                     if let Some(bytes) = build_bone_feed(&pose) {
-                        if write.send(Message::Binary(bytes)).await.is_err() {
+                        if write_message(&mut write, &bytes).await.is_err() {
                             break;
                         }
                     }
@@ -160,6 +194,35 @@ async fn handle_connection(
         }
     }
 
+    Ok(())
+}
+
+/// Read one length-prefixed message (4-byte little-endian length, which includes
+/// the 4 prefix bytes, followed by the payload). Returns `None` on clean EOF.
+async fn read_message<R: AsyncRead + Unpin>(r: &mut R) -> io::Result<Option<Vec<u8>>> {
+    let mut len_buf = [0u8; 4];
+    match r.read_exact(&mut len_buf).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e),
+    }
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if !(4..=1024 * 1024).contains(&len) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("bad SolarXR message length {len}"),
+        ));
+    }
+    let mut body = vec![0u8; len - 4];
+    r.read_exact(&mut body).await?;
+    Ok(Some(body))
+}
+
+/// Write one length-prefixed message.
+async fn write_message<W: AsyncWrite + Unpin>(w: &mut W, body: &[u8]) -> io::Result<()> {
+    let len = (body.len() + 4) as u32;
+    w.write_all(&len.to_le_bytes()).await?;
+    w.write_all(body).await?;
     Ok(())
 }
 
@@ -319,6 +382,31 @@ fn build_reset_response(reset_type: ResetType) -> Vec<u8> {
     fbb.finished_data().to_vec()
 }
 
+/// Build an (empty) `SettingsResponse` — enough to satisfy the client's
+/// `SettingsRequest` during the handshake.
+fn build_settings_response() -> Vec<u8> {
+    let mut fbb = flatbuffers::FlatBufferBuilder::new();
+    let resp = SettingsResponse::create(&mut fbb, &SettingsResponseArgs::default());
+    let header = RpcMessageHeader::create(
+        &mut fbb,
+        &RpcMessageHeaderArgs {
+            tx_id: None,
+            message_type: RpcMessage::SettingsResponse,
+            message: Some(flatbuffers::WIPOffset::new(resp.value())),
+        },
+    );
+    let msgs = fbb.create_vector(&[header]);
+    let bundle = MessageBundle::create(
+        &mut fbb,
+        &MessageBundleArgs {
+            rpc_msgs: Some(msgs),
+            ..Default::default()
+        },
+    );
+    fbb.finish(bundle, None);
+    fbb.finished_data().to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,5 +451,26 @@ mod tests {
         let resp = header.message_as_reset_response().unwrap();
         assert_eq!(resp.reset_type(), ResetType::Full);
         assert_eq!(resp.status(), ResetStatus::FINISHED);
+    }
+
+    #[test]
+    fn settings_response_round_trips() {
+        let bytes = build_settings_response();
+        let bundle = flatbuffers::root::<MessageBundle>(&bytes).unwrap();
+
+        let msgs = bundle.rpc_msgs().unwrap();
+        assert_eq!(msgs.len(), 1);
+        let header = msgs.get(0);
+        assert_eq!(header.message_type(), RpcMessage::SettingsResponse);
+        assert!(header.message_as_settings_response().is_some());
+    }
+
+    #[tokio::test]
+    async fn message_framing_round_trips() {
+        let (mut a, mut b) = tokio::io::duplex(1024);
+        let payload = b"hello solarxr".to_vec();
+        write_message(&mut a, &payload).await.unwrap();
+        let got = read_message(&mut b).await.unwrap().unwrap();
+        assert_eq!(got, payload);
     }
 }

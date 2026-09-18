@@ -10,8 +10,13 @@ use serde::Deserialize;
 /// Default tracker UDP protocol port.
 pub const DEFAULT_TRACKER_PORT: u16 = 6969;
 
-/// Default SolarXR WebSocket port (the port WiVRn connects to).
-pub const DEFAULT_SOLARXR_PORT: u16 = 21110;
+/// Default SolarXR IPC socket path — the Unix domain socket WiVRn/SteamVR
+/// connect to for the skeleton data feed.
+pub fn default_solarxr_socket() -> String {
+    std::env::var("XDG_RUNTIME_DIR")
+        .map(|d| format!("{d}/SlimeVRRpc"))
+        .unwrap_or_else(|_| "/run/user/1000/SlimeVRRpc".to_string())
+}
 
 /// Default liveness ping interval.
 pub const DEFAULT_PING_INTERVAL_SECS: u64 = 2;
@@ -65,9 +70,9 @@ pub struct Cli {
     #[arg(long)]
     pub tracker_port: Option<u16>,
 
-    /// SolarXR WebSocket port (WiVRn connects here).
+    /// SolarXR IPC socket path (Unix domain socket WiVRn connects to).
     #[arg(long)]
-    pub solarxr_port: Option<u16>,
+    pub solarxr_socket: Option<String>,
 
     /// Liveness ping interval in seconds.
     #[arg(long)]
@@ -100,7 +105,7 @@ pub struct AssignmentFile {
 #[serde(default, deny_unknown_fields)]
 pub struct FileConfig {
     pub tracker_port: Option<u16>,
-    pub solarxr_port: Option<u16>,
+    pub solarxr_socket: Option<String>,
     pub ping_interval_secs: Option<u64>,
     pub tracker_timeout_secs: Option<u64>,
     pub height_m: Option<f32>,
@@ -112,7 +117,7 @@ pub struct FileConfig {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub tracker_port: u16,
-    pub solarxr_port: u16,
+    pub solarxr_socket: String,
     pub ping_interval_secs: u64,
     pub tracker_timeout_secs: u64,
     pub height_m: f32,
@@ -124,7 +129,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tracker_port: DEFAULT_TRACKER_PORT,
-            solarxr_port: DEFAULT_SOLARXR_PORT,
+            solarxr_socket: default_solarxr_socket(),
             ping_interval_secs: DEFAULT_PING_INTERVAL_SECS,
             tracker_timeout_secs: DEFAULT_TRACKER_TIMEOUT_SECS,
             height_m: DEFAULT_HEIGHT_M,
@@ -149,8 +154,8 @@ impl Config {
         if let Some(v) = cli.tracker_port {
             cfg.tracker_port = v;
         }
-        if let Some(v) = cli.solarxr_port {
-            cfg.solarxr_port = v;
+        if let Some(v) = &cli.solarxr_socket {
+            cfg.solarxr_socket = v.clone();
         }
         if let Some(v) = cli.ping_interval_secs {
             cfg.ping_interval_secs = v;
@@ -173,8 +178,8 @@ impl Config {
         if let Some(v) = f.tracker_port {
             self.tracker_port = v;
         }
-        if let Some(v) = f.solarxr_port {
-            self.solarxr_port = v;
+        if let Some(v) = f.solarxr_socket {
+            self.solarxr_socket = v;
         }
         if let Some(v) = f.ping_interval_secs {
             self.ping_interval_secs = v;
@@ -202,7 +207,7 @@ mod tests {
     fn defaults_match_constants() {
         let cfg = Config::default();
         assert_eq!(cfg.tracker_port, DEFAULT_TRACKER_PORT);
-        assert_eq!(cfg.solarxr_port, DEFAULT_SOLARXR_PORT);
+        assert_eq!(cfg.solarxr_socket, default_solarxr_socket());
         assert_eq!(cfg.ping_interval_secs, DEFAULT_PING_INTERVAL_SECS);
         assert_eq!(cfg.tracker_timeout_secs, DEFAULT_TRACKER_TIMEOUT_SECS);
         assert_eq!(cfg.height_m, DEFAULT_HEIGHT_M);
@@ -213,7 +218,7 @@ mod tests {
         let cli = Cli {
             config: None,
             tracker_port: Some(7000),
-            solarxr_port: Some(22000),
+            solarxr_socket: Some("/tmp/test.sock".into()),
             ping_interval_secs: Some(5),
             tracker_timeout_secs: Some(9),
             height_m: Some(1.65),
@@ -221,7 +226,7 @@ mod tests {
         };
         let cfg = Config::load(&cli).unwrap();
         assert_eq!(cfg.tracker_port, 7000);
-        assert_eq!(cfg.solarxr_port, 22000);
+        assert_eq!(cfg.solarxr_socket, "/tmp/test.sock");
         assert_eq!(cfg.ping_interval_secs, 5);
         assert_eq!(cfg.tracker_timeout_secs, 9);
         assert_eq!(cfg.height_m, 1.65);
@@ -230,12 +235,12 @@ mod tests {
 
     #[test]
     fn partial_file_config_falls_back_to_defaults() {
-        let text = "height_m = 1.65\nsolarxr_port = 22000\n";
+        let text = "height_m = 1.65\nsolarxr_socket = \"/tmp/test.sock\"\n";
         let file: FileConfig = toml::from_str(text).unwrap();
         let mut cfg = Config::default();
         cfg.apply_file(file).unwrap();
         assert_eq!(cfg.height_m, 1.65);
-        assert_eq!(cfg.solarxr_port, 22000);
+        assert_eq!(cfg.solarxr_socket, "/tmp/test.sock");
         assert_eq!(cfg.tracker_port, DEFAULT_TRACKER_PORT);
         assert_eq!(cfg.ping_interval_secs, DEFAULT_PING_INTERVAL_SECS);
         assert_eq!(cfg.tracker_timeout_secs, DEFAULT_TRACKER_TIMEOUT_SECS);

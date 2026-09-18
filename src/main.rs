@@ -56,9 +56,9 @@ async fn main() -> anyhow::Result<()> {
         assignments,
     ));
 
-    // 2. SolarXR WebSocket server (WiVRn connects here).
+    // 2. SolarXR IPC server (WiVRn connects to this Unix domain socket).
     let _solarxr_task = tokio::spawn(solarxr::run(
-        SocketAddr::from(([0, 0, 0, 0], config.solarxr_port)),
+        config.solarxr_socket.clone(),
         pose.clone(),
         registry.clone(),
         calib.clone(),
