@@ -22,6 +22,9 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 /// A MAC address identifying a tracker.
 pub type Mac = [u8; 6];
 
+/// Seconds over which a yaw reset eases its correction in.
+const YAW_SMOOTH_SECS: f32 = 1.0;
+
 /// Yaw-drift compensation: records the yaw drift between resets and applies a
 /// gradually-ramping correction (a simplified form of the Java `calculateDrift`).
 #[derive(Debug, Default)]
@@ -84,6 +87,10 @@ pub struct TrackerCalibration {
     attachment_fix: UnitQuaternion<f32>,
     mount_rot_fix: UnitQuaternion<f32>,
     yaw_fix: UnitQuaternion<f32>,
+    /// The `yaw_fix` value at the moment the last yaw reset started (for easing).
+    yaw_fix_start: UnitQuaternion<f32>,
+    /// When the last yaw reset started (for easing the correction in).
+    yaw_reset_since: Option<Instant>,
     drift: DriftCompensator,
 }
 
@@ -95,6 +102,8 @@ impl Default for TrackerCalibration {
             attachment_fix: UnitQuaternion::identity(),
             mount_rot_fix: UnitQuaternion::identity(),
             yaw_fix: UnitQuaternion::identity(),
+            yaw_fix_start: UnitQuaternion::identity(),
+            yaw_reset_since: None,
             drift: DriftCompensator::new(),
         }
     }
@@ -109,15 +118,21 @@ impl TrackerCalibration {
         self.gyro_fix = inverse_yaw(&mounting_adjusted);
         self.attachment_fix = (self.gyro_fix * mounting_adjusted).inverse();
         self.yaw_fix = self.fix_yaw(mounting_adjusted, reference);
+        // Full reset snaps immediately (no yaw easing).
+        self.yaw_reset_since = None;
 
         let after = self.adjust_reference(raw);
         self.drift.record(&before, &after);
     }
 
-    /// Yaw reset: align only the yaw to `reference`.
+    /// Yaw reset: align only the yaw to `reference`, easing the correction in
+    /// over [`YAW_SMOOTH_SECS`] instead of snapping.
     pub fn yaw_reset(&mut self, raw: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) {
         let before = self.adjust_reference(raw);
-        self.yaw_fix = self.fix_yaw(raw * self.mounting_orientation, reference);
+        let target = self.fix_yaw(raw * self.mounting_orientation, reference);
+        self.yaw_fix_start = self.yaw_fix;
+        self.yaw_fix = target;
+        self.yaw_reset_since = Some(Instant::now());
         let after = self.adjust_reference(raw);
         self.drift.record(&before, &after);
     }
@@ -151,8 +166,19 @@ impl TrackerCalibration {
         rot = self.gyro_fix * rot;
         rot = rot * self.attachment_fix;
         rot = self.mount_rot_fix.inverse() * (rot * self.mount_rot_fix);
-        rot = self.yaw_fix * rot;
+        rot = self.effective_yaw_fix() * rot;
         rot
+    }
+
+    /// The yaw fix, eased from `yaw_fix_start` to `yaw_fix` over the smooth window.
+    fn effective_yaw_fix(&self) -> UnitQuaternion<f32> {
+        match self.yaw_reset_since {
+            Some(since) => {
+                let t = (since.elapsed().as_secs_f32() / YAW_SMOOTH_SECS).clamp(0.0, 1.0);
+                self.yaw_fix_start.slerp(&self.yaw_fix, t)
+            }
+            None => self.yaw_fix,
+        }
     }
 
     /// Port of the Java `fixYaw`.
@@ -303,9 +329,33 @@ mod tests {
 
         let mut c = TrackerCalibration::default();
         c.yaw_reset(raw, reference);
+        // Fast-forward past the smooth window so the correction is fully applied.
+        c.yaw_reset_since = Some(Instant::now() - std::time::Duration::from_secs(2));
 
         let adjusted = c.adjust(raw);
         assert!(yaw_close(&adjusted, &reference, 1e-4));
+    }
+
+    #[test]
+    fn yaw_reset_eases_in_over_time() {
+        let raw = yaw_quat(2.0);
+        let reference = yaw_quat(-0.5);
+
+        let mut c = TrackerCalibration::default();
+        c.yaw_reset(raw, reference);
+
+        // Immediately after the reset the correction is not fully applied.
+        let t0 = c.adjust(raw);
+        assert!(
+            !yaw_close(&t0, &reference, 1e-3),
+            "correction should ease in, got yaw {}",
+            yaw_of(&t0)
+        );
+
+        // After the smooth window it is fully applied.
+        c.yaw_reset_since = Some(Instant::now() - std::time::Duration::from_secs(2));
+        let t1 = c.adjust(raw);
+        assert!(yaw_close(&t1, &reference, 1e-4), "yaw {}", yaw_of(&t1));
     }
 
     #[test]
