@@ -35,8 +35,10 @@ dependency chain: nothing above an item can be finished without the items below 
       `attachment_fix`, `mount_rot_fix`, `yaw_fix`).
 - [x] **Drift compensation** — yaw drift recorded between resets and ramped back in
       (simplified: latest-drift only, no multi-reset weighted average yet).
-- [ ] **Calibration refinements.** Per-arm skip-pose/T-pose modes, HMD
-      special-casing, and yaw-reset smoothing are not ported.
+- [~] **Calibration refinements.** Yaw-reset smoothing (the correction eases in
+      over 1 s) and HMD special-casing (synthetic trackers are anchored at the
+      full 6-DoF feeder HMD pose) are in. Per-arm skip-pose/T-pose modes are still
+      TODO.
 - [x] **Frame alignment.** Ported the ktmath `Quaternion.SLIMEVR` mounting
       orientations (`FRONT`/`LEFT`/`RIGHT`/`FRONT_LEFT`/`FRONT_RIGHT`) via
       `default_mounting(position)`, applied as `mounting_orientation` on SENSOR_INFO.
