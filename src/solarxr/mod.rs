@@ -24,7 +24,7 @@ use solarxr_protocol::data_feed::{
 };
 use solarxr_protocol::datatypes::math::{Quat, Vec3f};
 use solarxr_protocol::datatypes::{
-    BodyPart, DeviceId, TrackerId, TrackerIdArgs, TrackerStatus,
+    BodyPart, TrackerId, TrackerIdArgs, TrackerStatus,
 };
 use solarxr_protocol::flatbuffers;
 use solarxr_protocol::pub_sub::{
@@ -290,11 +290,12 @@ fn build_bone_feed(pose: &Pose) -> Option<Vec<u8>> {
         let quat = Quat::new(src.rotation.i, src.rotation.j, src.rotation.k, src.rotation.w);
         let position = Vec3f::new(pos[0], pos[1], pos[2]);
 
-        let device_id = DeviceId([0]);
+        // `device_id` must be absent: WiVRn filters out trackers with a device id
+        // ("loopback feeder devices"). `tracker_num` alone is the stable identity.
         let tracker_id = TrackerId::create(
             &mut fbb,
             &TrackerIdArgs {
-                device_id: Some(&device_id),
+                device_id: None,
                 tracker_num: i as u8,
             },
         );
