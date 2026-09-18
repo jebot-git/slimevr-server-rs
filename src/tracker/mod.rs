@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use nalgebra::{UnitQuaternion, Vector3};
 
@@ -113,5 +113,58 @@ impl TrackerRegistry {
     /// All connected trackers.
     pub fn iter(&self) -> impl Iterator<Item = &Tracker> {
         self.by_mac.values()
+    }
+
+    /// Remove a tracker by MAC, cleaning up socket-map entries that point at it.
+    pub fn remove(&mut self, mac: [u8; 6]) -> Option<Tracker> {
+        let t = self.by_mac.remove(&mac)?;
+        self.by_socket.retain(|_, m| *m != mac);
+        Some(t)
+    }
+
+    /// Evict trackers that haven't sent a packet within `timeout`.
+    /// Returns how many were removed.
+    pub fn remove_stale(&mut self, timeout: Duration) -> usize {
+        let stale: Vec<[u8; 6]> = self
+            .by_mac
+            .values()
+            .filter(|t| t.last_seen.elapsed() > timeout)
+            .map(|t| t.mac)
+            .collect();
+        let n = stale.len();
+        for mac in stale {
+            self.remove(mac);
+        }
+        n
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn addr(n: u8) -> SocketAddr {
+        format!("127.0.0.1:{n}").parse().unwrap()
+    }
+
+    #[test]
+    fn removes_stale_trackers_and_cleans_socket_map() {
+        let mut reg = TrackerRegistry::default();
+        let mac0 = [0u8; 6];
+        let mac1 = [1u8; 6];
+        reg.register_handshake(addr(1), mac0);
+        reg.register_handshake(addr(2), mac1);
+
+        // Both are fresh: nothing to evict.
+        assert_eq!(reg.remove_stale(Duration::from_secs(5)), 0);
+
+        // Backdate mac0's last_seen so it trips the timeout.
+        reg.by_mac.get_mut(&mac0).unwrap().last_seen = Instant::now() - Duration::from_secs(10);
+
+        assert_eq!(reg.remove_stale(Duration::from_secs(5)), 1);
+        assert!(!reg.by_mac.contains_key(&mac0));
+        assert!(reg.by_mac.contains_key(&mac1));
+        // The socket map no longer references mac0.
+        assert!(reg.by_socket.values().all(|m| *m != mac0));
     }
 }

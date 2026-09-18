@@ -15,6 +15,10 @@ pub const DEFAULT_SOLARXR_PORT: u16 = 21110;
 /// Default liveness ping interval.
 pub const DEFAULT_PING_INTERVAL_SECS: u64 = 2;
 
+/// Default tracker timeout: a tracker is dropped after this long with no packets
+/// (must be longer than the ping interval; matches shora's 5 s tracker timeout).
+pub const DEFAULT_TRACKER_TIMEOUT_SECS: u64 = 5;
+
 /// Default user height for autobone bone lengths.
 pub const DEFAULT_HEIGHT_M: f32 = 1.80;
 
@@ -38,6 +42,10 @@ pub struct Cli {
     #[arg(long)]
     pub ping_interval_secs: Option<u64>,
 
+    /// Drop a tracker after this many seconds without packets.
+    #[arg(long)]
+    pub tracker_timeout_secs: Option<u64>,
+
     /// User height in meters (drives autobone bone lengths).
     #[arg(long)]
     pub height_m: Option<f32>,
@@ -51,6 +59,7 @@ pub struct FileConfig {
     pub tracker_port: Option<u16>,
     pub solarxr_port: Option<u16>,
     pub ping_interval_secs: Option<u64>,
+    pub tracker_timeout_secs: Option<u64>,
     pub height_m: Option<f32>,
 }
 
@@ -60,6 +69,7 @@ pub struct Config {
     pub tracker_port: u16,
     pub solarxr_port: u16,
     pub ping_interval_secs: u64,
+    pub tracker_timeout_secs: u64,
     pub height_m: f32,
 }
 
@@ -69,6 +79,7 @@ impl Default for Config {
             tracker_port: DEFAULT_TRACKER_PORT,
             solarxr_port: DEFAULT_SOLARXR_PORT,
             ping_interval_secs: DEFAULT_PING_INTERVAL_SECS,
+            tracker_timeout_secs: DEFAULT_TRACKER_TIMEOUT_SECS,
             height_m: DEFAULT_HEIGHT_M,
         }
     }
@@ -96,6 +107,9 @@ impl Config {
         if let Some(v) = cli.ping_interval_secs {
             cfg.ping_interval_secs = v;
         }
+        if let Some(v) = cli.tracker_timeout_secs {
+            cfg.tracker_timeout_secs = v;
+        }
         if let Some(v) = cli.height_m {
             cfg.height_m = v;
         }
@@ -113,6 +127,9 @@ impl Config {
         if let Some(v) = f.ping_interval_secs {
             self.ping_interval_secs = v;
         }
+        if let Some(v) = f.tracker_timeout_secs {
+            self.tracker_timeout_secs = v;
+        }
         if let Some(v) = f.height_m {
             self.height_m = v;
         }
@@ -129,6 +146,7 @@ mod tests {
         assert_eq!(cfg.tracker_port, DEFAULT_TRACKER_PORT);
         assert_eq!(cfg.solarxr_port, DEFAULT_SOLARXR_PORT);
         assert_eq!(cfg.ping_interval_secs, DEFAULT_PING_INTERVAL_SECS);
+        assert_eq!(cfg.tracker_timeout_secs, DEFAULT_TRACKER_TIMEOUT_SECS);
         assert_eq!(cfg.height_m, DEFAULT_HEIGHT_M);
     }
 
@@ -139,12 +157,14 @@ mod tests {
             tracker_port: Some(7000),
             solarxr_port: Some(22000),
             ping_interval_secs: Some(5),
+            tracker_timeout_secs: Some(9),
             height_m: Some(1.65),
         };
         let cfg = Config::load(&cli).unwrap();
         assert_eq!(cfg.tracker_port, 7000);
         assert_eq!(cfg.solarxr_port, 22000);
         assert_eq!(cfg.ping_interval_secs, 5);
+        assert_eq!(cfg.tracker_timeout_secs, 9);
         assert_eq!(cfg.height_m, 1.65);
     }
 
@@ -158,5 +178,6 @@ mod tests {
         assert_eq!(cfg.solarxr_port, 22000);
         assert_eq!(cfg.tracker_port, DEFAULT_TRACKER_PORT);
         assert_eq!(cfg.ping_interval_secs, DEFAULT_PING_INTERVAL_SECS);
+        assert_eq!(cfg.tracker_timeout_secs, DEFAULT_TRACKER_TIMEOUT_SECS);
     }
 }

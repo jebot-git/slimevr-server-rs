@@ -64,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
     let _ping_task = tokio::spawn(ping_trackers(
         registry.clone(),
         config.ping_interval_secs,
+        config.tracker_timeout_secs,
     ));
 
     // 4. Pose estimation loop: tracker rotations → skeleton pose.
@@ -84,8 +85,13 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Periodically send a `Ping` to every known tracker to detect drops.
-async fn ping_trackers(registry: Arc<RwLock<TrackerRegistry>>, interval_secs: u64) {
+/// Periodically send a `Ping` to every known tracker and evict any that have
+/// stopped responding.
+async fn ping_trackers(
+    registry: Arc<RwLock<TrackerRegistry>>,
+    interval_secs: u64,
+    timeout_secs: u64,
+) {
     let Ok(socket) = UdpSocket::bind("0.0.0.0:0").await else {
         tracing::error!("failed to bind ping socket");
         return;
@@ -103,6 +109,15 @@ async fn ping_trackers(registry: Arc<RwLock<TrackerRegistry>>, interval_secs: u6
             if let Ok(bytes) = pkt.to_bytes() {
                 let _ = socket.send_to(&bytes, t.addr).await;
             }
+        }
+
+        // Drop trackers that stopped answering.
+        let removed = registry
+            .write()
+            .unwrap()
+            .remove_stale(Duration::from_secs(timeout_secs));
+        if removed > 0 {
+            tracing::info!(removed, timeout_secs, "evicted timed-out trackers");
         }
     }
 }

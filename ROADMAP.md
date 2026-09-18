@@ -52,8 +52,9 @@ dependency chain: nothing above an item can be finished without the items below 
       synthetic trackers.
 - [ ] **RPC surface.** Reset/calibration, tracker assignment, status, settings,
       serial, autobone, etc. — the `rpc/` and remaining `pub_sub/` message families.
-- [ ] **Tracker management.** SENSOR_INFO sensor-id/status handling, multi-sensor
-      trackers, disconnect/timeout cleanup.
+- [~] **Tracker management.** SENSOR_INFO sensor-id/position handling and
+      disconnect/timeout cleanup (configurable `tracker_timeout_secs`) are in.
+      Multi-sensor trackers and SENSOR_INFO status handling are still TODO.
 
 ## Ops & ergonomics
 
