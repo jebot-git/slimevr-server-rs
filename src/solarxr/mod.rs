@@ -185,7 +185,7 @@ async fn handle_connection(
                                                 if let Some(req) = h.message_as_reset_request() {
                                                     tracing::info!("RPC ResetRequest");
                                                     if let Some(bytes) =
-                                                        handle_reset_request(req, &registry, &calib)
+                                                        handle_reset_request(req, &registry, &calib, &hmd)
                                                     {
                                                         let _ = write_message(&mut write, &bytes).await;
                                                     }
@@ -474,6 +474,7 @@ fn handle_reset_request(
     req: ResetRequest<'_>,
     registry: &Arc<RwLock<TrackerRegistry>>,
     calib: &Arc<RwLock<Calibration>>,
+    hmd: &Arc<RwLock<Option<HmdPose>>>,
 ) -> Option<Vec<u8>> {
     let action = match req.reset_type() {
         ResetType::Yaw => ActionType::ResetYaw,
@@ -484,7 +485,8 @@ fn handle_reset_request(
     {
         let reg = registry.read().unwrap();
         let mut cal = calib.write().unwrap();
-        reset::handle_user_action(&reg, &mut cal, &action);
+        let hmd_pose = hmd.read().unwrap();
+        reset::handle_user_action(&reg, &mut cal, hmd_pose.as_ref(), &action);
     }
     Some(build_reset_response(req.reset_type()))
 }

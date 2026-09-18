@@ -19,6 +19,7 @@ use tokio::net::UdpSocket;
 
 use super::TrackerRegistry;
 use crate::calibration::Calibration;
+use crate::feeder::HmdPose;
 use crate::reset;
 
 /// Server-bound packet type tags (see `firmware_protocol::packet_type` in shora).
@@ -35,6 +36,7 @@ pub async fn run(
     bind: SocketAddr,
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
+    hmd: Arc<RwLock<Option<HmdPose>>>,
     assignments: Arc<HashMap<[u8; 6], u8>>,
     ping_interval_secs: u64,
     tracker_timeout_secs: u64,
@@ -113,7 +115,8 @@ pub async fn run(
                 tracing::info!(?src, ?action, "tracker user action");
                 let reg = registry.read().unwrap();
                 let mut cal = calib.write().unwrap();
-                reset::handle_user_action(&reg, &mut cal, &action);
+                let hmd_pose = hmd.read().unwrap();
+                reset::handle_user_action(&reg, &mut cal, hmd_pose.as_ref(), &action);
             }
             _ => {}
         }

@@ -61,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
         SocketAddr::from(([0, 0, 0, 0], config.tracker_port)),
         registry.clone(),
         calib.clone(),
+        hmd.clone(),
         assignments,
         config.ping_interval_secs,
         config.tracker_timeout_secs,

@@ -138,7 +138,16 @@ impl TrackerCalibration {
     }
 
     /// Mounting reset (skip pose): compute the yaw-only axis alignment.
-    pub fn mounting_reset(&mut self, raw: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) {
+    ///
+    /// `position` is the tracker's `TrackerPosition` id. Non-thigh trackers face
+    /// "back" during a mounting reset, so their yaw angle is flipped by 180°
+    /// (matching the Java `resetMounting`), while thigh trackers keep it as-is.
+    pub fn mounting_reset(
+        &mut self,
+        raw: UnitQuaternion<f32>,
+        reference: UnitQuaternion<f32>,
+        position: u8,
+    ) {
         let before = self.adjust_reference(raw);
 
         let mut rot = raw * self.mounting_orientation;
@@ -148,7 +157,12 @@ impl TrackerCalibration {
         rot = reference_yaw(&reference).inverse() * rot;
 
         let up = rot * Vector3::y();
-        let yaw_angle = up.x.atan2(up.z);
+        let mut yaw_angle = up.x.atan2(up.z);
+        // LEFT_UPPER_LEG (7) / RIGHT_UPPER_LEG (8) are thighs; everything else
+        // (chest, hip, lower legs, …) points backward in the skip pose.
+        if !matches!(position, 7 | 8) {
+            yaw_angle -= std::f32::consts::PI;
+        }
         self.mount_rot_fix = yaw_quat(yaw_angle);
 
         let after = self.adjust_reference(raw);
