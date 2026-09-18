@@ -161,9 +161,12 @@ impl Skeleton {
 
 			// The old child (old target) becomes the new parent (new source).
 			let new_parent = child_node;
-			let new_child = g.add_node(Node::new());
 
 			for &child_kind in parent_bone.children() {
+				// Each sibling bone needs its own tail joint node. Sharing a single
+				// `new_child` across the loop would make every sibling point at the
+				// same node and, via `update_edge`, collapse them onto one edge.
+				let new_child = g.add_node(Node::new());
 				let edge = g.update_edge(
 					new_parent,
 					new_child,
@@ -262,6 +265,27 @@ mod test {
 
 		for (bone, length) in bone_lengths.iter() {
 			assert_eq!(&skeleton[bone].length, length);
+		}
+	}
+
+	/// Sibling bones must map to distinct graph edges. A shared tail node used to
+	/// collapse every sibling onto a single (last-writer-wins) edge.
+	#[test]
+	fn siblings_have_distinct_edges() {
+		let config = SkeletonConfig::new(BoneMap::new([1.0; BoneKind::num_types()]));
+		let s = Skeleton::new(&config);
+
+		// UpperChest has three children.
+		assert_ne!(s.bone_map[BoneKind::Chest], s.bone_map[BoneKind::ShoulderL]);
+		assert_ne!(s.bone_map[BoneKind::Chest], s.bone_map[BoneKind::ShoulderR]);
+		assert_ne!(s.bone_map[BoneKind::ShoulderL], s.bone_map[BoneKind::ShoulderR]);
+		// Hip has two children.
+		assert_ne!(s.bone_map[BoneKind::HipL], s.bone_map[BoneKind::HipR]);
+
+		// Every bone must have its own distinct edge.
+		let mut seen = std::collections::HashSet::new();
+		for bone in BoneKind::iter() {
+			assert!(seen.insert(s.bone_map[bone]), "{bone:?} shares an edge");
 		}
 	}
 }

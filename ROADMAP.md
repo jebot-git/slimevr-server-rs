@@ -37,8 +37,10 @@ dependency chain: nothing above an item can be finished without the items below 
 - [x] **Frame alignment.** Ported the ktmath `Quaternion.SLIMEVR` mounting
       orientations (`FRONT`/`LEFT`/`RIGHT`/`FRONT_LEFT`/`FRONT_RIGHT`) via
       `default_mounting(position)`, applied as `mounting_orientation` on SENSOR_INFO.
-- [ ] **Bone lengths / proportions.** Real user proportions (autobone / height).
-      Approximate adult defaults are in place.
+- [~] **Bone lengths / proportions.** Height-based autobone is in
+      (`bone_lengths_from_height`, anthropometric ratios at `DEFAULT_HEIGHT_M`).
+      Real per-user autobone optimization (measure actual proportions from
+      movement) is not yet ported.
 - [ ] **Smoothing / prediction.** Port the Java server's filtering and pose smoothing.
 
 ## Protocol completeness
@@ -64,7 +66,11 @@ dependency chain: nothing above an item can be finished without the items below 
       streamed over SolarXR). Fixed: ktmath `(w,x,y,z)` frame-alignment bug, a 10s
       ping interval exceeding shora's 5s tracker timeout, skeleton structure now
       matches Java (`UpperChest`/`ShoulderL/R`/`HipL/R`), and the HaritoraX 2 ankle
-      tracker maps to the shin (`LOWER_LEG`) not the foot. Remaining: autobone
-      bone lengths + `HEAD`/fingers bones.
+      tracker maps to the shin (`LOWER_LEG`) not the foot. `HEAD` and finger bones
+      are intentionally omitted: `HEAD` is derived from the HMD pose (WiVRn's
+      domain, not a SlimeVR tracker bone) and fingers are WiVRn's hand-tracking
+      responsibility — the HaritoraX does not track them. Fixed: FK graph builder
+      collapsed sibling bones (e.g. `HipL`/`HipR`, `Chest`/`ShoulderL`/`ShoulderR`)
+      onto one shared edge.
 - [ ] Remove the vendored `solarxr_protocol` in favour of the upstream git dep once
       the version is pinned.
