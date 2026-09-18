@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::time::Duration;
 
 use firmware_protocol::deku::DekuContainerRead as _;
 use firmware_protocol::deku::DekuContainerWrite as _;
@@ -35,9 +36,20 @@ pub async fn run(
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
     assignments: Arc<HashMap<[u8; 6], u8>>,
+    ping_interval_secs: u64,
+    tracker_timeout_secs: u64,
 ) -> anyhow::Result<()> {
-    let socket = UdpSocket::bind(bind).await?;
+    let socket = Arc::new(UdpSocket::bind(bind).await?);
     tracing::info!("tracker UDP server listening on {bind}");
+
+    // Liveness pings must come from this same socket so trackers see the correct
+    // source address, answer with a PONG, and keep `last_seen` fresh.
+    tokio::spawn(ping_loop(
+        socket.clone(),
+        registry.clone(),
+        ping_interval_secs,
+        tracker_timeout_secs,
+    ));
 
     let mut buf = [0u8; 2048];
     loop {
@@ -161,5 +173,39 @@ async fn send_handshake_response(socket: &UdpSocket, src: SocketAddr) {
     );
     if let Ok(bytes) = resp.to_bytes() {
         let _ = socket.send_to(&bytes, src).await;
+    }
+}
+
+/// Periodically ping every tracker (from the shared socket) and evict trackers
+/// that stop answering.
+async fn ping_loop(
+    socket: Arc<UdpSocket>,
+    registry: Arc<RwLock<TrackerRegistry>>,
+    interval_secs: u64,
+    timeout_secs: u64,
+) {
+    let mut tick = tokio::time::interval(Duration::from_secs(interval_secs));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        tick.tick().await;
+
+        let trackers: Vec<_> = registry.read().unwrap().iter().cloned().collect();
+        for t in trackers {
+            // A real server would use a unique challenge per ping; a constant
+            // placeholder is fine for the first milestone.
+            let pkt = Packet::new(0, CbPacket::Ping { challenge: [0u8; 4] });
+            if let Ok(bytes) = pkt.to_bytes() {
+                let _ = socket.send_to(&bytes, t.addr).await;
+            }
+        }
+
+        let removed = registry
+            .write()
+            .unwrap()
+            .remove_stale(Duration::from_secs(timeout_secs));
+        if removed > 0 {
+            tracing::info!(removed, timeout_secs, "evicted timed-out trackers");
+        }
     }
 }

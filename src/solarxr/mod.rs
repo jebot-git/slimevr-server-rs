@@ -17,12 +17,15 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use firmware_protocol::ActionType;
+use solarxr_protocol::data_feed::tracker::{TrackerData, TrackerDataArgs, TrackerInfo, TrackerInfoArgs};
 use solarxr_protocol::data_feed::{
     Bone, BoneArgs, DataFeedMessage, DataFeedMessageHeader, DataFeedMessageHeaderArgs,
     DataFeedUpdate, DataFeedUpdateArgs,
 };
 use solarxr_protocol::datatypes::math::{Quat, Vec3f};
-use solarxr_protocol::datatypes::BodyPart;
+use solarxr_protocol::datatypes::{
+    BodyPart, DeviceId, TrackerId, TrackerIdArgs, TrackerStatus,
+};
 use solarxr_protocol::flatbuffers;
 use solarxr_protocol::pub_sub::{
     PubSubHeader, PubSubHeaderArgs, PubSubUnion, SubscriptionRequest, TopicHandle,
@@ -226,7 +229,34 @@ async fn write_message<W: AsyncWrite + Unpin>(w: &mut W, body: &[u8]) -> io::Res
     Ok(())
 }
 
-/// Build a `MessageBundle` containing a `DataFeedUpdate` with one `Bone` per body part.
+/// The computed 6-DoF trackers we emit as emulated Vive trackers:
+/// `(tracker body part, source bone body part, use tail joint)`.
+const COMPUTED_TRACKERS: &[(u8, u8, bool)] = &[
+    (1, 2, false),  // HEAD ← Neck head (root at origin)
+    (3, 3, false),  // CHEST ← Chest head
+    (5, 5, true),   // HIP ← Hip tail
+    (8, 6, true),   // LEFT_LOWER_LEG (knee) ← ThighL tail
+    (9, 7, true),   // RIGHT_LOWER_LEG (knee) ← ThighR tail
+    (10, 10, true), // LEFT_FOOT ← FootL tail
+    (11, 11, true), // RIGHT_FOOT ← FootR tail
+    (14, 16, true), // LEFT_LOWER_ARM (elbow) ← UpperArmL tail
+    (15, 17, true), // RIGHT_LOWER_ARM (elbow) ← UpperArmR tail
+    (18, 18, true), // LEFT_HAND ← WristL tail
+    (19, 19, true), // RIGHT_HAND ← WristR tail
+];
+
+/// The child-side (tail) joint position of a bone.
+fn bone_tail_pos(bp: &BonePose) -> [f32; 3] {
+    let off = bp.rotation * nalgebra::Vector3::new(0.0, -bp.length, 0.0);
+    [
+        bp.head_pos[0] + off.x,
+        bp.head_pos[1] + off.y,
+        bp.head_pos[2] + off.z,
+    ]
+}
+
+/// Build a `MessageBundle` containing a `DataFeedUpdate` with the bone feed and
+/// the computed synthetic trackers (emulated Vive trackers).
 fn build_bone_feed(pose: &Pose) -> Option<Vec<u8>> {
     let mut fbb = flatbuffers::FlatBufferBuilder::new();
 
@@ -247,10 +277,55 @@ fn build_bone_feed(pose: &Pose) -> Option<Vec<u8>> {
     }
     let bones_vec = fbb.create_vector(&bones);
 
+    let mut trackers = Vec::with_capacity(COMPUTED_TRACKERS.len());
+    for (i, &(tracker_part, src_bone, use_tail)) in COMPUTED_TRACKERS.iter().enumerate() {
+        let Some(src) = pose.get(&src_bone) else {
+            continue;
+        };
+        let pos = if use_tail {
+            bone_tail_pos(src)
+        } else {
+            src.head_pos
+        };
+        let quat = Quat::new(src.rotation.i, src.rotation.j, src.rotation.k, src.rotation.w);
+        let position = Vec3f::new(pos[0], pos[1], pos[2]);
+
+        let device_id = DeviceId([0]);
+        let tracker_id = TrackerId::create(
+            &mut fbb,
+            &TrackerIdArgs {
+                device_id: Some(&device_id),
+                tracker_num: i as u8,
+            },
+        );
+        let info = TrackerInfo::create(
+            &mut fbb,
+            &TrackerInfoArgs {
+                body_part: BodyPart(tracker_part),
+                is_computed: true,
+                ..Default::default()
+            },
+        );
+        let tracker = TrackerData::create(
+            &mut fbb,
+            &TrackerDataArgs {
+                tracker_id: Some(tracker_id),
+                info: Some(info),
+                status: TrackerStatus::OK,
+                rotation: Some(&quat),
+                position: Some(&position),
+                ..Default::default()
+            },
+        );
+        trackers.push(tracker);
+    }
+    let trackers_vec = fbb.create_vector(&trackers);
+
     let update = DataFeedUpdate::create(
         &mut fbb,
         &DataFeedUpdateArgs {
             bones: Some(bones_vec),
+            synthetic_trackers: Some(trackers_vec),
             ..Default::default()
         },
     );
@@ -436,6 +511,15 @@ mod tests {
         let bones = update.bones().unwrap();
         assert_eq!(bones.len(), 1);
         assert_eq!(bones.get(0).body_part(), BodyPart(3));
+
+        // The chest bone also produces one computed (synthetic) tracker.
+        let trackers = update.synthetic_trackers().unwrap();
+        assert_eq!(trackers.len(), 1);
+        let td = trackers.get(0);
+        assert_eq!(td.status(), TrackerStatus::OK);
+        assert_eq!(td.info().unwrap().body_part(), BodyPart(3));
+        assert!(td.info().unwrap().is_computed());
+        assert!(td.position().is_some());
     }
 
     #[test]
