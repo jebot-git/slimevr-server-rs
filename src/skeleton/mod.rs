@@ -60,37 +60,42 @@ pub fn body_part_for_bone(bone: BoneKind) -> Option<u8> {
     })
 }
 
-/// Approximate adult bone lengths (meters). Placeholder until real proportions /
-/// autobone land.
-fn default_bone_lengths() -> BoneMap<f32> {
+/// Default user height (meters) for bone-length autoboning. TODO: make this a
+/// config/CLI option and add the full per-user autobone optimization.
+pub const DEFAULT_HEIGHT_M: f32 = 1.80;
+
+/// Compute bone lengths from a user's height using standard anthropometric
+/// proportions (fractions of stature; Drillis & Contini-style ratios). The head
+/// (≈13%) is the skeleton root and is not a bone here.
+fn bone_lengths_from_height(h: f32) -> BoneMap<f32> {
     let mut m = BoneMap::new([0.0f32; BoneKind::NUM_TYPES]);
-    m[BoneKind::Neck] = 0.10;
-    m[BoneKind::UpperChest] = 0.15;
-    m[BoneKind::Chest] = 0.22;
-    m[BoneKind::Waist] = 0.10;
-    m[BoneKind::Hip] = 0.10;
-    m[BoneKind::HipL] = 0.10;
-    m[BoneKind::HipR] = 0.10;
-    m[BoneKind::ThighL] = 0.45;
-    m[BoneKind::ThighR] = 0.45;
-    m[BoneKind::AnkleL] = 0.42;
-    m[BoneKind::AnkleR] = 0.42;
-    m[BoneKind::FootL] = 0.07;
-    m[BoneKind::FootR] = 0.07;
-    m[BoneKind::ShoulderL] = 0.15;
-    m[BoneKind::ShoulderR] = 0.15;
-    m[BoneKind::UpperArmL] = 0.30;
-    m[BoneKind::UpperArmR] = 0.30;
-    m[BoneKind::ForearmL] = 0.26;
-    m[BoneKind::ForearmR] = 0.26;
-    m[BoneKind::WristL] = 0.15;
-    m[BoneKind::WristR] = 0.15;
+    m[BoneKind::Neck] = 0.052 * h;
+    m[BoneKind::UpperChest] = 0.06 * h;
+    m[BoneKind::Chest] = 0.09 * h;
+    m[BoneKind::Waist] = 0.07 * h;
+    m[BoneKind::Hip] = 0.05 * h;
+    m[BoneKind::HipL] = 0.03 * h;
+    m[BoneKind::HipR] = 0.03 * h;
+    m[BoneKind::ThighL] = 0.245 * h;
+    m[BoneKind::ThighR] = 0.245 * h;
+    m[BoneKind::AnkleL] = 0.246 * h;
+    m[BoneKind::AnkleR] = 0.246 * h;
+    m[BoneKind::FootL] = 0.039 * h;
+    m[BoneKind::FootR] = 0.039 * h;
+    m[BoneKind::ShoulderL] = 0.06 * h;
+    m[BoneKind::ShoulderR] = 0.06 * h;
+    m[BoneKind::UpperArmL] = 0.186 * h;
+    m[BoneKind::UpperArmR] = 0.186 * h;
+    m[BoneKind::ForearmL] = 0.146 * h;
+    m[BoneKind::ForearmR] = 0.146 * h;
+    m[BoneKind::WristL] = 0.108 * h;
+    m[BoneKind::WristR] = 0.108 * h;
     m
 }
 
-/// Build a [`Skeleton`] with default bone lengths.
+/// Build a [`Skeleton`] with height-autoboned bone lengths.
 fn build_skeleton() -> Skeleton {
-    Skeleton::new(&SkeletonConfig::new(default_bone_lengths()))
+    Skeleton::new(&SkeletonConfig::new(bone_lengths_from_height(DEFAULT_HEIGHT_M)))
 }
 
 /// A solved bone's pose: global rotation, head-joint position, and length.
