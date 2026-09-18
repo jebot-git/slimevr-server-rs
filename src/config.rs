@@ -38,6 +38,9 @@ pub const DEFAULT_HEIGHT_M: f32 = 1.80;
 /// Default tracker rotation smoothing (0..1 blend toward the latest sample).
 pub const DEFAULT_SMOOTHING: f32 = 0.3;
 
+/// Default prediction time (seconds to extrapolate rotations forward).
+pub const DEFAULT_PREDICTION: f32 = 0.0;
+
 /// Parse a MAC address like `AA:BB:CC:DD:EE:FF` or `AABBCCDDEEFF` (hex, with
 /// optional `:`/`-` separators) into its 6 bytes.
 pub fn parse_mac(s: &str) -> anyhow::Result<[u8; 6]> {
@@ -104,6 +107,10 @@ pub struct Cli {
     #[arg(long)]
     pub smoothing: Option<f32>,
 
+    /// Prediction time in seconds (extrapolate rotations forward for latency).
+    #[arg(long)]
+    pub prediction: Option<f32>,
+
     /// Override a tracker's body-part assignment: `MAC=POSITION` (repeatable).
     #[arg(long, value_name = "MAC=POSITION")]
     pub assign: Vec<String>,
@@ -129,6 +136,7 @@ pub struct FileConfig {
     pub tracker_timeout_secs: Option<u64>,
     pub height_m: Option<f32>,
     pub smoothing: Option<f32>,
+    pub prediction: Option<f32>,
     #[serde(default)]
     pub tracker_assignments: Vec<AssignmentFile>,
 }
@@ -143,6 +151,7 @@ pub struct Config {
     pub tracker_timeout_secs: u64,
     pub height_m: f32,
     pub smoothing: f32,
+    pub prediction: f32,
     /// Manual tracker body-part overrides, keyed by MAC.
     pub tracker_assignments: HashMap<[u8; 6], u8>,
 }
@@ -157,6 +166,7 @@ impl Default for Config {
             tracker_timeout_secs: DEFAULT_TRACKER_TIMEOUT_SECS,
             height_m: DEFAULT_HEIGHT_M,
             smoothing: DEFAULT_SMOOTHING,
+            prediction: DEFAULT_PREDICTION,
             tracker_assignments: HashMap::new(),
         }
     }
@@ -196,6 +206,9 @@ impl Config {
         if let Some(v) = cli.smoothing {
             cfg.smoothing = v;
         }
+        if let Some(v) = cli.prediction {
+            cfg.prediction = v;
+        }
         for s in &cli.assign {
             let (mac, position) = parse_assignment(s)?;
             cfg.tracker_assignments.insert(mac, position);
@@ -225,6 +238,9 @@ impl Config {
         }
         if let Some(v) = f.smoothing {
             self.smoothing = v;
+        }
+        if let Some(v) = f.prediction {
+            self.prediction = v;
         }
         for a in f.tracker_assignments {
             let mac = parse_mac(&a.mac)
@@ -260,6 +276,7 @@ mod tests {
             tracker_timeout_secs: Some(9),
             height_m: Some(1.65),
             smoothing: Some(0.5),
+            prediction: Some(0.02),
             assign: vec!["aa:bb:cc:dd:ee:ff=9".into()],
         };
         let cfg = Config::load(&cli).unwrap();
@@ -270,6 +287,7 @@ mod tests {
         assert_eq!(cfg.tracker_timeout_secs, 9);
         assert_eq!(cfg.height_m, 1.65);
         assert_eq!(cfg.smoothing, 0.5);
+        assert_eq!(cfg.prediction, 0.02);
         assert_eq!(cfg.tracker_assignments[&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]], 9);
     }
 

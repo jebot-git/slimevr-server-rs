@@ -19,7 +19,7 @@ mod tracker;
 
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use skeletal_model::BoneMap;
@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
     let _feeder_task = tokio::spawn(feeder::run(config.feeder_socket.clone(), hmd.clone()));
 
     // 4. Pose estimation loop: tracker rotations → skeleton pose.
-    let mut smoother = smoothing::Smoother::new(config.smoothing);
+    let mut filter = smoothing::RotationFilter::new(config.smoothing, config.prediction);
     let mut tick = tokio::time::interval(Duration::from_millis(33)); // ~30 Hz
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -92,10 +92,11 @@ async fn main() -> anyhow::Result<()> {
         if !trackers.is_empty() {
             tracing::trace!("trackers: {}", trackers.len());
         }
-        // Smooth each tracker's raw rotation before the skeleton solve.
+        // Predict (latency compensation) then smooth each tracker's rotation.
+        let now = Instant::now();
         for t in &mut trackers {
             if let Some(rot) = t.rotation {
-                t.rotation = Some(smoother.apply(t.mac, rot));
+                t.rotation = Some(filter.apply(t.mac, rot, now));
             }
         }
         let new_pose = {
