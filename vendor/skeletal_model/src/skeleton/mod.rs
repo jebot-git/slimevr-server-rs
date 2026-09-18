@@ -215,6 +215,18 @@ impl Skeleton {
 		self.graph[child].output_pos_g.0
 	}
 
+	/// The solved global position of a bone's head joint (valid after [`Self::solve`]).
+	pub fn bone_head_pos(&self, bone: BoneKind) -> Point {
+		let edge = self.bone_map[bone];
+		let head = self.graph.edge_endpoints(edge).unwrap().0;
+		self.graph[head].output_pos_g.0
+	}
+
+	/// The length of a bone.
+	pub fn bone_length(&self, bone: BoneKind) -> f32 {
+		self.graph[self.bone_map[bone]].length
+	}
+
 	// ---- Private fns ----
 
 	/// Get the nodes of the graph that have a `Some(_)` [`Node::input_pos_g`]

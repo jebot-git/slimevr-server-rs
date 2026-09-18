@@ -87,7 +87,16 @@ fn build_skeleton() -> Skeleton {
     Skeleton::new(&SkeletonConfig::new(default_bone_lengths()))
 }
 
-/// Solve the skeleton from the tracker set and return `BodyPart id → rotation`.
+/// A solved bone's pose: global rotation, head-joint position, and length.
+#[derive(Debug, Clone, Copy)]
+pub struct BonePose {
+    pub rotation: UnitQuaternion<f32>,
+    /// Head (parent-side) joint position in the skeleton's global frame.
+    pub head_pos: [f32; 3],
+    pub length: f32,
+}
+
+/// Solve the skeleton from the tracker set and return `BodyPart id → BonePose`.
 ///
 /// Each tracker's raw rotation is first adjusted by its mounting offset and the
 /// global heading (see [`Calibration`]), then fed as its bone's global rotation.
@@ -95,7 +104,7 @@ fn build_skeleton() -> Skeleton {
 pub fn solve_pose(
     trackers: impl Iterator<Item = Tracker>,
     calib: &Calibration,
-) -> HashMap<u8, UnitQuaternion<f32>> {
+) -> HashMap<u8, BonePose> {
     let mut skeleton = build_skeleton();
 
     for t in trackers {
@@ -113,9 +122,14 @@ pub fn solve_pose(
     for bone in BoneKind::iter() {
         if let Some(body_part) = body_part_for_bone(bone) {
             let [w, i, j, k] = skeleton.bone_output_rot(bone);
+            let head = skeleton.bone_head_pos(bone);
             pose.insert(
                 body_part,
-                UnitQuaternion::from_quaternion(Quaternion::new(w, i, j, k)),
+                BonePose {
+                    rotation: UnitQuaternion::from_quaternion(Quaternion::new(w, i, j, k)),
+                    head_pos: [head.x, head.y, head.z],
+                    length: skeleton.bone_length(bone),
+                },
             );
         }
     }

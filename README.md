@@ -4,9 +4,10 @@ A from-scratch **Rust rewrite of the [SlimeVR](https://github.com/SlimeVR/SlimeV
 
 This is a **separate development** from [shora](https://github.com/jebot-git/shora). Shora currently *launches* the Java/Kotlin SlimeVR server as a headless subprocess; the goal of this project is to eventually replace that subprocess with a native Rust binary.
 
-> **Status: early but progressing.** The tracker input path and a first
-> forward-kinematics solver are working; the WiVRn-facing SolarXR output is
-> scaffolded. See [`ROADMAP.md`](ROADMAP.md).
+> **Status: end-to-end skeleton output now works.** Tracker input → calibration →
+> FK solve → SolarXR bone feed (`bone_mask`) is wired; what remains is refinement
+> (drift compensation, skip-pose calibration, RPC surface). See
+> [`ROADMAP.md`](ROADMAP.md).
 
 ## What SlimeVR-Rust provides (and what we build on top)
 
@@ -43,7 +44,7 @@ WiVRn ◄── WebSocket SolarXR (:21110) ── solarxr/mod.rs ◄── Pose 
 | `calibration.rs` | Per-tracker mounting offsets + full-reset heading (`heading * raw * offset`) |
 | `reset.rs` | Tracker user actions (`Reset`/`ResetYaw`/`ResetMounting`) → calibration updates |
 | `skeleton/mod.rs` | Pose estimation: adjusted tracker rotations → `skeletal_model` FK solve → bone pose |
-| `solarxr/mod.rs` | SolarXR WebSocket server + `DataFeedUpdate` encoder |
+| `solarxr/mod.rs` | SolarXR WebSocket server: `StartDataFeed`/`TopicMapping` handshake + `DataFeedUpdate.bones` feed |
 | `main.rs` | Orchestration: spawn servers, run the pose loop |
 
 ## Building & running

@@ -43,13 +43,13 @@ dependency chain: nothing above an item can be finished without the items below 
 
 ## Protocol completeness
 
-- [ ] **SolarXR handshake.** WiVRn sends a `StartDataFeed` RPC + expects a topic
-      mapping and an RPC reply before it consumes updates. Reference: Java
-      `websocketapi/WebSocketVRBridge.kt` + `protocol/`.
-- [ ] **Bone feed (`bone_mask`).** WiVRn subscribes with `bone_mask: true`; emit
-      `DataFeedUpdate.bones` (`Bone` + `BodyPart`) instead of synthetic trackers.
+- [x] **SolarXR handshake.** Reply to `StartDataFeed` (begin streaming) and to
+      `SubscriptionRequest`/`TopicHandleRequest` with a `TopicMapping`.
+- [x] **Bone feed (`bone_mask`).** Emit `DataFeedUpdate.bones` (`Bone` with
+      `rotation_g` + `head_position_g` + `body_part` + `bone_length`) instead of
+      synthetic trackers.
 - [ ] **RPC surface.** Reset/calibration, tracker assignment, status, settings,
-      serial, autobone, etc. — the `rpc/` and `pub_sub/` message families.
+      serial, autobone, etc. — the `rpc/` and remaining `pub_sub/` message families.
 - [ ] **Tracker management.** SENSOR_INFO sensor-id/status handling, multi-sensor
       trackers, disconnect/timeout cleanup.
 
