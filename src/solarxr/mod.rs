@@ -40,6 +40,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::calibration::Calibration;
+use crate::feeder::HmdPose;
 use crate::reset;
 use crate::skeleton::BonePose;
 use crate::tracker::TrackerRegistry;
@@ -53,6 +54,7 @@ pub async fn run(
     pose: Arc<RwLock<Pose>>,
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
+    hmd: Arc<RwLock<Option<HmdPose>>>,
 ) -> anyhow::Result<()> {
     let listener = bind_unix_socket(&path).await?;
     tracing::info!("SolarXR IPC socket listening on {path}");
@@ -63,8 +65,9 @@ pub async fn run(
         let pose = pose.clone();
         let registry = registry.clone();
         let calib = calib.clone();
+        let hmd = hmd.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, pose, registry, calib).await {
+            if let Err(e) = handle_connection(stream, pose, registry, calib, hmd).await {
                 tracing::warn!("SolarXR connection ended: {e:#}");
             }
         });
@@ -95,6 +98,7 @@ async fn handle_connection(
     pose: Arc<RwLock<Pose>>,
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
+    hmd: Arc<RwLock<Option<HmdPose>>>,
 ) -> anyhow::Result<()> {
     let (mut read, mut write) = stream.into_split();
 
@@ -121,7 +125,8 @@ async fn handle_connection(
                                             DataFeedMessage::PollDataFeed => {
                                                 tracing::debug!("SolarXR PollDataFeed received; sending update");
                                                 let pose = pose.read().unwrap().clone();
-                                                if let Some(bytes) = build_bone_feed(&pose) {
+                                                let hmd = *hmd.read().unwrap();
+                                                if let Some(bytes) = build_bone_feed(&pose, hmd.as_ref()) {
                                                     let _ = write_message(&mut write, &bytes).await;
                                                 }
                                             }
@@ -187,7 +192,8 @@ async fn handle_connection(
             _ = tick.tick() => {
                 if streaming {
                     let pose = pose.read().unwrap().clone();
-                    if let Some(bytes) = build_bone_feed(&pose) {
+                    let hmd = *hmd.read().unwrap();
+                    if let Some(bytes) = build_bone_feed(&pose, hmd.as_ref()) {
                         if write_message(&mut write, &bytes).await.is_err() {
                             break;
                         }
@@ -257,7 +263,7 @@ fn bone_tail_pos(bp: &BonePose) -> [f32; 3] {
 
 /// Build a `MessageBundle` containing a `DataFeedUpdate` with the bone feed and
 /// the computed synthetic trackers (emulated Vive trackers).
-fn build_bone_feed(pose: &Pose) -> Option<Vec<u8>> {
+fn build_bone_feed(pose: &Pose, hmd: Option<&HmdPose>) -> Option<Vec<u8>> {
     let mut fbb = flatbuffers::FlatBufferBuilder::new();
 
     let mut bones = Vec::with_capacity(pose.len());
@@ -282,11 +288,17 @@ fn build_bone_feed(pose: &Pose) -> Option<Vec<u8>> {
         let Some(src) = pose.get(&src_bone) else {
             continue;
         };
-        let pos = if use_tail {
+        let mut pos = if use_tail {
             bone_tail_pos(src)
         } else {
             src.head_pos
         };
+        // Anchor the emulated Vive trackers at the HMD position (if known).
+        if let Some(h) = hmd {
+            pos[0] += h[0];
+            pos[1] += h[1];
+            pos[2] += h[2];
+        }
         let quat = Quat::new(src.rotation.i, src.rotation.j, src.rotation.k, src.rotation.w);
         let position = Vec3f::new(pos[0], pos[1], pos[2]);
 
@@ -500,7 +512,7 @@ mod tests {
             },
         );
 
-        let bytes = build_bone_feed(&pose).unwrap();
+        let bytes = build_bone_feed(&pose, None).unwrap();
         let bundle = flatbuffers::root::<MessageBundle>(&bytes).unwrap();
 
         let msgs = bundle.data_feed_msgs().unwrap();

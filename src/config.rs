@@ -18,6 +18,13 @@ pub fn default_solarxr_socket() -> String {
         .unwrap_or_else(|_| "/run/user/1000/SlimeVRRpc".to_string())
 }
 
+/// Default SteamVR feeder socket path — where WiVRn sends the HMD pose.
+pub fn default_feeder_socket() -> String {
+    std::env::var("XDG_RUNTIME_DIR")
+        .map(|d| format!("{d}/SlimeVRInput"))
+        .unwrap_or_else(|_| "/run/user/1000/SlimeVRInput".to_string())
+}
+
 /// Default liveness ping interval.
 pub const DEFAULT_PING_INTERVAL_SECS: u64 = 2;
 
@@ -74,6 +81,10 @@ pub struct Cli {
     #[arg(long)]
     pub solarxr_socket: Option<String>,
 
+    /// SteamVR feeder socket path (where WiVRn sends the HMD pose).
+    #[arg(long)]
+    pub feeder_socket: Option<String>,
+
     /// Liveness ping interval in seconds.
     #[arg(long)]
     pub ping_interval_secs: Option<u64>,
@@ -106,6 +117,7 @@ pub struct AssignmentFile {
 pub struct FileConfig {
     pub tracker_port: Option<u16>,
     pub solarxr_socket: Option<String>,
+    pub feeder_socket: Option<String>,
     pub ping_interval_secs: Option<u64>,
     pub tracker_timeout_secs: Option<u64>,
     pub height_m: Option<f32>,
@@ -118,6 +130,7 @@ pub struct FileConfig {
 pub struct Config {
     pub tracker_port: u16,
     pub solarxr_socket: String,
+    pub feeder_socket: String,
     pub ping_interval_secs: u64,
     pub tracker_timeout_secs: u64,
     pub height_m: f32,
@@ -130,6 +143,7 @@ impl Default for Config {
         Self {
             tracker_port: DEFAULT_TRACKER_PORT,
             solarxr_socket: default_solarxr_socket(),
+            feeder_socket: default_feeder_socket(),
             ping_interval_secs: DEFAULT_PING_INTERVAL_SECS,
             tracker_timeout_secs: DEFAULT_TRACKER_TIMEOUT_SECS,
             height_m: DEFAULT_HEIGHT_M,
@@ -157,6 +171,9 @@ impl Config {
         if let Some(v) = &cli.solarxr_socket {
             cfg.solarxr_socket = v.clone();
         }
+        if let Some(v) = &cli.feeder_socket {
+            cfg.feeder_socket = v.clone();
+        }
         if let Some(v) = cli.ping_interval_secs {
             cfg.ping_interval_secs = v;
         }
@@ -180,6 +197,9 @@ impl Config {
         }
         if let Some(v) = f.solarxr_socket {
             self.solarxr_socket = v;
+        }
+        if let Some(v) = f.feeder_socket {
+            self.feeder_socket = v;
         }
         if let Some(v) = f.ping_interval_secs {
             self.ping_interval_secs = v;
@@ -219,6 +239,7 @@ mod tests {
             config: None,
             tracker_port: Some(7000),
             solarxr_socket: Some("/tmp/test.sock".into()),
+            feeder_socket: Some("/tmp/feeder.sock".into()),
             ping_interval_secs: Some(5),
             tracker_timeout_secs: Some(9),
             height_m: Some(1.65),
@@ -227,6 +248,7 @@ mod tests {
         let cfg = Config::load(&cli).unwrap();
         assert_eq!(cfg.tracker_port, 7000);
         assert_eq!(cfg.solarxr_socket, "/tmp/test.sock");
+        assert_eq!(cfg.feeder_socket, "/tmp/feeder.sock");
         assert_eq!(cfg.ping_interval_secs, 5);
         assert_eq!(cfg.tracker_timeout_secs, 9);
         assert_eq!(cfg.height_m, 1.65);

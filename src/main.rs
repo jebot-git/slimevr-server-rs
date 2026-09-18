@@ -9,6 +9,7 @@
 
 mod calibration;
 mod config;
+mod feeder;
 mod reset;
 mod skeleton;
 mod solarxr;
@@ -44,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
     let pose: Arc<RwLock<Pose>> = Arc::new(RwLock::new(Pose::default()));
     let calib: Arc<RwLock<Calibration>> = Arc::new(RwLock::new(Calibration::new()));
     let assignments = Arc::new(config.tracker_assignments.clone());
+    let hmd: Arc<RwLock<Option<feeder::HmdPose>>> = Arc::new(RwLock::new(None));
 
     // 1. Tracker UDP protocol server ("Hey OVR =D 5"; also handles pings/eviction).
     let _tracker_task = tokio::spawn(tracker::udp::run(
@@ -61,7 +63,11 @@ async fn main() -> anyhow::Result<()> {
         pose.clone(),
         registry.clone(),
         calib.clone(),
+        hmd.clone(),
     ));
+
+    // 3. SteamVR feeder bridge (WiVRn sends the HMD pose here).
+    let _feeder_task = tokio::spawn(feeder::run(config.feeder_socket.clone(), hmd.clone()));
 
     // 3. Pose estimation loop: tracker rotations → skeleton pose.
     let mut tick = tokio::time::interval(Duration::from_millis(33)); // ~30 Hz
