@@ -57,7 +57,9 @@ dependency chain: nothing above an item can be finished without the items below 
 
 ## Ops & ergonomics
 
-- [ ] Config file + CLI (ports, bone lengths, tracker assignments).
+- [~] Config file + CLI. TOML config file + `--tracker-port`/`--solarxr-port`/
+      `--ping-interval-secs`/`--height-m` flags (precedence: defaults → file →
+      CLI). Tracker body-part assignment (auto + manual) is still TODO.
 - [ ] Tracker body-part assignment (auto + manual), matching the Java server's setup.
 - [ ] Skeleton/pose logging or a lightweight debug UI.
 - [~] Parity testing against the Java server — `examples/solarxr_dump` +

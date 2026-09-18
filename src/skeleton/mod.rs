@@ -60,10 +60,6 @@ pub fn body_part_for_bone(bone: BoneKind) -> Option<u8> {
     })
 }
 
-/// Default user height (meters) for bone-length autoboning. TODO: make this a
-/// config/CLI option and add the full per-user autobone optimization.
-pub const DEFAULT_HEIGHT_M: f32 = 1.80;
-
 /// Compute bone lengths from a user's height using standard anthropometric
 /// proportions (fractions of stature; Drillis & Contini-style ratios). The head
 /// (≈13%) is the skeleton root and is not a bone here.
@@ -94,8 +90,8 @@ fn bone_lengths_from_height(h: f32) -> BoneMap<f32> {
 }
 
 /// Build a [`Skeleton`] with height-autoboned bone lengths.
-fn build_skeleton() -> Skeleton {
-    Skeleton::new(&SkeletonConfig::new(bone_lengths_from_height(DEFAULT_HEIGHT_M)))
+fn build_skeleton(height_m: f32) -> Skeleton {
+    Skeleton::new(&SkeletonConfig::new(bone_lengths_from_height(height_m)))
 }
 
 /// A solved bone's pose: global rotation, head-joint position, and length.
@@ -111,12 +107,14 @@ pub struct BonePose {
 ///
 /// Each tracker's raw rotation is first adjusted by its mounting offset and the
 /// global heading (see [`Calibration`]), then fed as its bone's global rotation.
-/// The FK solver fills in every untracked bone.
+/// The FK solver fills in every untracked bone. `height_m` drives the autobone
+/// bone lengths.
 pub fn solve_pose(
     trackers: impl Iterator<Item = Tracker>,
     calib: &Calibration,
+    height_m: f32,
 ) -> HashMap<u8, BonePose> {
-    let mut skeleton = build_skeleton();
+    let mut skeleton = build_skeleton(height_m);
 
     for t in trackers {
         if let (Some(bone), Some(raw)) = (bone_kind_for_position(t.position), t.rotation) {
@@ -187,7 +185,7 @@ mod tests {
             accel: None,
             last_seen: std::time::Instant::now(),
         };
-        let pose = solve_pose(std::iter::once(t), &Calibration::new());
+        let pose = solve_pose(std::iter::once(t), &Calibration::new(), 1.80);
         // All 21 bones map to a SolarXR body part.
         assert_eq!(pose.len(), 21);
         assert!(pose.contains_key(&3)); // chest

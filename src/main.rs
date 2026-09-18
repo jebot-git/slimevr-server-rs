@@ -18,17 +18,21 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use clap::Parser;
 use firmware_protocol::deku::DekuContainerWrite as _;
 use firmware_protocol::{CbPacket, Packet};
 use tokio::net::UdpSocket;
 
 use crate::calibration::Calibration;
-use crate::config::{PING_INTERVAL_SECS, SOLARXR_PORT, TRACKER_PORT};
+use crate::config::{Cli, Config};
 use crate::solarxr::Pose;
 use crate::tracker::TrackerRegistry;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Parse args first so `--help`/`--version` exit cleanly before logging starts.
+    let cli = Cli::parse();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -36,7 +40,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    tracing::info!("slimevr-server-rs starting");
+    let config = Config::load(&cli)?;
+    tracing::info!(?config, "slimevr-server-rs starting");
 
     let registry = Arc::new(RwLock::new(TrackerRegistry::default()));
     let pose: Arc<RwLock<Pose>> = Arc::new(RwLock::new(Pose::default()));
@@ -44,19 +49,22 @@ async fn main() -> anyhow::Result<()> {
 
     // 1. Tracker UDP protocol server ("Hey OVR =D 5").
     let _tracker_task = tokio::spawn(tracker::udp::run(
-        SocketAddr::from(([0, 0, 0, 0], TRACKER_PORT)),
+        SocketAddr::from(([0, 0, 0, 0], config.tracker_port)),
         registry.clone(),
         calib.clone(),
     ));
 
     // 2. SolarXR WebSocket server (WiVRn connects here).
     let _solarxr_task = tokio::spawn(solarxr::run(
-        SocketAddr::from(([0, 0, 0, 0], SOLARXR_PORT)),
+        SocketAddr::from(([0, 0, 0, 0], config.solarxr_port)),
         pose.clone(),
     ));
 
     // 3. Tracker liveness pings.
-    let _ping_task = tokio::spawn(ping_trackers(registry.clone()));
+    let _ping_task = tokio::spawn(ping_trackers(
+        registry.clone(),
+        config.ping_interval_secs,
+    ));
 
     // 4. Pose estimation loop: tracker rotations → skeleton pose.
     let mut tick = tokio::time::interval(Duration::from_millis(33)); // ~30 Hz
@@ -70,20 +78,20 @@ async fn main() -> anyhow::Result<()> {
         }
         let new_pose = {
             let calib = calib.read().unwrap();
-            skeleton::solve_pose(trackers.into_iter(), &calib)
+            skeleton::solve_pose(trackers.into_iter(), &calib, config.height_m)
         };
         *pose.write().unwrap() = new_pose;
     }
 }
 
 /// Periodically send a `Ping` to every known tracker to detect drops.
-async fn ping_trackers(registry: Arc<RwLock<TrackerRegistry>>) {
+async fn ping_trackers(registry: Arc<RwLock<TrackerRegistry>>, interval_secs: u64) {
     let Ok(socket) = UdpSocket::bind("0.0.0.0:0").await else {
         tracing::error!("failed to bind ping socket");
         return;
     };
 
-    let mut tick = tokio::time::interval(Duration::from_secs(PING_INTERVAL_SECS));
+    let mut tick = tokio::time::interval(Duration::from_secs(interval_secs));
     loop {
         tick.tick().await;
 

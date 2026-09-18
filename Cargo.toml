@@ -28,6 +28,11 @@ tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
 
+# ── CLI + config ──────────────────────────────────────────────────────────────
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
 # ── misc ──────────────────────────────────────────────────────────────────────
 anyhow = "1"
 tracing = "0.1"
