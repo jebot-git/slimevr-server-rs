@@ -63,7 +63,7 @@ pub fn body_part_for_bone(bone: BoneKind) -> Option<u8> {
 /// Compute bone lengths from a user's height using standard anthropometric
 /// proportions (fractions of stature; Drillis & Contini-style ratios). The head
 /// (≈13%) is the skeleton root and is not a bone here.
-fn bone_lengths_from_height(h: f32) -> BoneMap<f32> {
+pub fn bone_lengths_from_height(h: f32) -> BoneMap<f32> {
     let mut m = BoneMap::new([0.0f32; BoneKind::NUM_TYPES]);
     m[BoneKind::Neck] = 0.052 * h;
     m[BoneKind::UpperChest] = 0.06 * h;
@@ -89,11 +89,6 @@ fn bone_lengths_from_height(h: f32) -> BoneMap<f32> {
     m
 }
 
-/// Build a [`Skeleton`] with height-autoboned bone lengths.
-fn build_skeleton(height_m: f32) -> Skeleton {
-    Skeleton::new(&SkeletonConfig::new(bone_lengths_from_height(height_m)))
-}
-
 /// A solved bone's pose: global rotation, head-joint position, and length.
 #[derive(Debug, Clone, Copy)]
 pub struct BonePose {
@@ -114,7 +109,16 @@ pub fn solve_pose(
     calib: &Calibration,
     height_m: f32,
 ) -> HashMap<u8, BonePose> {
-    let mut skeleton = build_skeleton(height_m);
+    solve_pose_with_lengths(trackers, calib, bone_lengths_from_height(height_m))
+}
+
+/// Like [`solve_pose`], but with explicit bone lengths (used by autobone).
+pub fn solve_pose_with_lengths(
+    trackers: impl Iterator<Item = Tracker>,
+    calib: &Calibration,
+    lengths: BoneMap<f32>,
+) -> HashMap<u8, BonePose> {
+    let mut skeleton = Skeleton::new(&SkeletonConfig::new(lengths));
 
     for t in trackers {
         if let (Some(bone), Some(raw)) = (bone_kind_for_position(t.position), t.rotation) {

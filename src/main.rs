@@ -7,6 +7,7 @@
 //!
 //! [SlimeVR-Rust]: https://github.com/SlimeVR/SlimeVR-Rust
 
+mod autobone;
 mod calibration;
 mod config;
 mod feeder;
@@ -20,6 +21,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use clap::Parser;
+use skeletal_model::BoneMap;
 
 use crate::calibration::Calibration;
 use crate::config::{Cli, Config};
@@ -46,6 +48,12 @@ async fn main() -> anyhow::Result<()> {
     let calib: Arc<RwLock<Calibration>> = Arc::new(RwLock::new(Calibration::new()));
     let assignments = Arc::new(config.tracker_assignments.clone());
     let hmd: Arc<RwLock<Option<feeder::HmdPose>>> = Arc::new(RwLock::new(None));
+    // Current bone lengths (start height-autoboned; replaced by autobone::optimize).
+    let lengths: Arc<RwLock<BoneMap<f32>>> = Arc::new(RwLock::new(skeleton::bone_lengths_from_height(
+        config.height_m,
+    )));
+    let autobone: Arc<RwLock<autobone::AutoboneState>> =
+        Arc::new(RwLock::new(autobone::AutoboneState::default()));
 
     // 1. Tracker UDP protocol server ("Hey OVR =D 5"; also handles pings/eviction).
     let _tracker_task = tokio::spawn(tracker::udp::run(
@@ -64,12 +72,15 @@ async fn main() -> anyhow::Result<()> {
         registry.clone(),
         calib.clone(),
         hmd.clone(),
+        lengths.clone(),
+        autobone.clone(),
+        config.height_m,
     ));
 
     // 3. SteamVR feeder bridge (WiVRn sends the HMD pose here).
     let _feeder_task = tokio::spawn(feeder::run(config.feeder_socket.clone(), hmd.clone()));
 
-    // 3. Pose estimation loop: tracker rotations → skeleton pose.
+    // 4. Pose estimation loop: tracker rotations → skeleton pose.
     let mut tick = tokio::time::interval(Duration::from_millis(33)); // ~30 Hz
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -81,8 +92,15 @@ async fn main() -> anyhow::Result<()> {
         }
         let new_pose = {
             let calib = calib.read().unwrap();
-            skeleton::solve_pose(trackers.into_iter(), &calib, config.height_m)
+            let lengths = lengths.read().unwrap();
+            skeleton::solve_pose_with_lengths(trackers.clone().into_iter(), &calib, *lengths)
         };
         *pose.write().unwrap() = new_pose;
+
+        // Autobone recording (frames are appended while `recording` is set).
+        let mut ab = autobone.write().unwrap();
+        if ab.recording {
+            ab.frames.push(autobone::Frame { trackers });
+        }
     }
 }

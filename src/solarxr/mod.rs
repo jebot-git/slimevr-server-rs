@@ -32,13 +32,16 @@ use solarxr_protocol::pub_sub::{
     TopicHandleArgs, TopicId, TopicIdArgs, TopicMapping, TopicMappingArgs,
 };
 use solarxr_protocol::rpc::{
-    ResetRequest, ResetResponse, ResetResponseArgs, ResetStatus, ResetType, RpcMessage,
-    RpcMessageHeader, RpcMessageHeaderArgs, SettingsResponse, SettingsResponseArgs,
+    AutoBoneProcessRequest, AutoBoneProcessStatusResponse, AutoBoneProcessStatusResponseArgs,
+    AutoBoneProcessType, ResetRequest, ResetResponse, ResetResponseArgs, ResetStatus, ResetType,
+    RpcMessage, RpcMessageHeader, RpcMessageHeaderArgs, SettingsResponse, SettingsResponseArgs,
 };
 use solarxr_protocol::{MessageBundle, MessageBundleArgs};
+use skeletal_model::BoneMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 
+use crate::autobone;
 use crate::calibration::Calibration;
 use crate::feeder::HmdPose;
 use crate::reset;
@@ -55,6 +58,9 @@ pub async fn run(
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
     hmd: Arc<RwLock<Option<HmdPose>>>,
+    lengths: Arc<RwLock<BoneMap<f32>>>,
+    autobone: Arc<RwLock<autobone::AutoboneState>>,
+    target_height: f32,
 ) -> anyhow::Result<()> {
     let listener = bind_unix_socket(&path).await?;
     tracing::info!("SolarXR IPC socket listening on {path}");
@@ -66,8 +72,21 @@ pub async fn run(
         let registry = registry.clone();
         let calib = calib.clone();
         let hmd = hmd.clone();
+        let lengths = lengths.clone();
+        let autobone = autobone.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, pose, registry, calib, hmd).await {
+            if let Err(e) = handle_connection(
+                stream,
+                pose,
+                registry,
+                calib,
+                hmd,
+                lengths,
+                autobone,
+                target_height,
+            )
+            .await
+            {
                 tracing::warn!("SolarXR connection ended: {e:#}");
             }
         });
@@ -99,6 +118,9 @@ async fn handle_connection(
     registry: Arc<RwLock<TrackerRegistry>>,
     calib: Arc<RwLock<Calibration>>,
     hmd: Arc<RwLock<Option<HmdPose>>>,
+    lengths: Arc<RwLock<BoneMap<f32>>>,
+    autobone: Arc<RwLock<autobone::AutoboneState>>,
+    target_height: f32,
 ) -> anyhow::Result<()> {
     let (mut read, mut write) = stream.into_split();
 
@@ -173,6 +195,20 @@ async fn handle_connection(
                                                 let _ =
                                                     write_message(&mut write, &build_settings_response())
                                                         .await;
+                                            }
+                                            RpcMessage::AutoBoneProcessRequest => {
+                                                if let Some(req) = h.message_as_auto_bone_process_request() {
+                                                    tracing::info!("RPC AutoBoneProcessRequest");
+                                                    if let Some(bytes) = handle_autobone_request(
+                                                        req,
+                                                        &autobone,
+                                                        &lengths,
+                                                        &calib,
+                                                        target_height,
+                                                    ) {
+                                                        let _ = write_message(&mut write, &bytes).await;
+                                                    }
+                                                }
                                             }
                                             _ => {}
                                         }
@@ -480,6 +516,79 @@ fn build_settings_response() -> Vec<u8> {
         &RpcMessageHeaderArgs {
             tx_id: None,
             message_type: RpcMessage::SettingsResponse,
+            message: Some(flatbuffers::WIPOffset::new(resp.value())),
+        },
+    );
+    let msgs = fbb.create_vector(&[header]);
+    let bundle = MessageBundle::create(
+        &mut fbb,
+        &MessageBundleArgs {
+            rpc_msgs: Some(msgs),
+            ..Default::default()
+        },
+    );
+    fbb.finish(bundle, None);
+    fbb.finished_data().to_vec()
+}
+
+/// Handle an autobone record/process request and build a status response.
+fn handle_autobone_request(
+    req: AutoBoneProcessRequest<'_>,
+    autobone: &Arc<RwLock<autobone::AutoboneState>>,
+    lengths: &Arc<RwLock<BoneMap<f32>>>,
+    calib: &Arc<RwLock<Calibration>>,
+    target_height: f32,
+) -> Option<Vec<u8>> {
+    let ptype = req.process_type();
+    match ptype {
+        AutoBoneProcessType::RECORD => {
+            let mut ab = autobone.write().unwrap();
+            ab.recording = true;
+            ab.frames.clear();
+            tracing::info!("autobone recording started");
+        }
+        AutoBoneProcessType::PROCESS => {
+            let mut ab = autobone.write().unwrap();
+            ab.recording = false;
+            let frames = std::mem::take(&mut ab.frames);
+            drop(ab);
+            if frames.is_empty() {
+                tracing::warn!("autobone: no frames recorded");
+            } else {
+                let calib = calib.read().unwrap();
+                let cur = *lengths.read().unwrap();
+                let out = autobone::optimize(&frames, &calib, cur, target_height, 20);
+                *lengths.write().unwrap() = out;
+                tracing::info!(frames = frames.len(), "autobone processed");
+            }
+        }
+        AutoBoneProcessType::APPLY
+        | AutoBoneProcessType::SAVE
+        | AutoBoneProcessType::NONE => {}
+        _ => {}
+    }
+    Some(build_autobone_status_response(ptype))
+}
+
+/// Build an `AutoBoneProcessStatusResponse` (completed + success).
+fn build_autobone_status_response(ptype: AutoBoneProcessType) -> Vec<u8> {
+    let mut fbb = flatbuffers::FlatBufferBuilder::new();
+    let resp = AutoBoneProcessStatusResponse::create(
+        &mut fbb,
+        &AutoBoneProcessStatusResponseArgs {
+            process_type: ptype,
+            current: 1,
+            total: 1,
+            completed: true,
+            success: true,
+            eta: 0.0,
+        },
+    );
+    let header = RpcMessageHeader::create(
+        &mut fbb,
+        &RpcMessageHeaderArgs {
+            tx_id: None,
+            message_type: RpcMessage::AutoBoneProcessStatusResponse,
             message: Some(flatbuffers::WIPOffset::new(resp.value())),
         },
     );
