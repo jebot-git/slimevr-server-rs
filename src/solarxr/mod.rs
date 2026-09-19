@@ -280,12 +280,8 @@ const COMPUTED_TRACKERS: &[(u8, u8, bool)] = &[
     (5, 5, true),   // HIP ← Hip tail
     (8, 6, true),   // LEFT_LOWER_LEG (knee) ← ThighL tail
     (9, 7, true),   // RIGHT_LOWER_LEG (knee) ← ThighR tail
-    (10, 10, true), // LEFT_FOOT ← FootL tail
-    (11, 11, true), // RIGHT_FOOT ← FootR tail
-    (14, 16, true), // LEFT_LOWER_ARM (elbow) ← UpperArmL tail
-    (15, 17, true), // RIGHT_LOWER_ARM (elbow) ← UpperArmR tail
-    (18, 18, true), // LEFT_HAND ← WristL tail
-    (19, 19, true), // RIGHT_HAND ← WristR tail
+    (10, 10, true), // LEFT_FOOT ← FootL tail (estimated from shin)
+    (11, 11, true), // RIGHT_FOOT ← FootR tail (estimated from shin)
 ];
 
 /// The child-side (tail) joint position of a bone.
@@ -342,11 +338,16 @@ fn build_bone_feed(pose: &Pose, hmd: Option<&HmdPose>) -> Option<Vec<u8>> {
         };
         let local_rot = src.rotation;
 
+        // The skeleton is solved in the tracking frame (up = +Y, bones going
+        // down -Y), with yaw already aligned to the HMD via the full reset's
+        // yaw-fix. Anchor it only at the HMD's *position*; re-applying the HMD
+        // rotation here would tilt the skeleton with the head (laying it flat
+        // when looking down) and double the head yaw.
         let (pos, rot) = match &hmd_pose {
-            Some((hmd_pos, hmd_rot)) => {
+            Some((hmd_pos, _)) => {
                 let lp = nalgebra::Vector3::new(local_pos[0], local_pos[1], local_pos[2]);
-                let gp = hmd_pos + hmd_rot * lp;
-                ([gp.x, gp.y, gp.z], hmd_rot * local_rot)
+                let gp = hmd_pos + lp;
+                ([gp.x, gp.y, gp.z], local_rot)
             }
             None => (local_pos, local_rot),
         };

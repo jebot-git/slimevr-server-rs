@@ -86,17 +86,8 @@ async fn main() -> anyhow::Result<()> {
     let mut filter = smoothing::RotationFilter::new(config.smoothing, config.prediction);
     let mut tick = tokio::time::interval(Duration::from_millis(33)); // ~30 Hz
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut last_dump = Instant::now();
     loop {
         tick.tick().await;
-
-        // Diagnostic: periodically dump raw + calibrated tracker orientations.
-        if last_dump.elapsed() >= Duration::from_secs(2) {
-            last_dump = Instant::now();
-            let reg = registry.read().unwrap();
-            let calib = calib.read().unwrap();
-            reset::dump_tracker_orientations(&reg, &calib);
-        }
 
         let mut trackers: Vec<_> = registry.read().unwrap().iter().cloned().collect();
         if !trackers.is_empty() {

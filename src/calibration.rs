@@ -111,10 +111,16 @@ impl Default for TrackerCalibration {
 
 impl TrackerCalibration {
     /// Full reset (standing): zero this tracker's yaw/pitch/roll against `reference`.
+    ///
+    /// With a correct `mounting_orientation` (chip → body) and the NED→SlimeVR
+    /// parse-time conversion, `raw * mounting` is the tracker's body→world
+    /// rotation (up = +Y), so the Java-compatible decomposition applies:
+    /// `gyro_fix` removes the body yaw, `attachment_fix` removes pitch/roll, and
+    /// `yaw_fix` aligns the yaw to the reference (HMD).
     pub fn full_reset(&mut self, raw: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) {
         let before = self.adjust_reference(raw);
-        let mounting_adjusted = raw * self.mounting_orientation;
 
+        let mounting_adjusted = raw * self.mounting_orientation;
         self.gyro_fix = inverse_yaw(&mounting_adjusted);
         self.attachment_fix = (self.gyro_fix * mounting_adjusted).inverse();
         self.yaw_fix = self.fix_yaw(mounting_adjusted, reference);
@@ -248,7 +254,9 @@ fn q(w: f32, x: f32, y: f32, z: f32) -> UnitQuaternion<f32> {
     UnitQuaternion::new_normalize(Quaternion::new(w, x, y, z))
 }
 
-/// The SlimeVR `defaultMounting()` orientation for a `TrackerPosition` id.
+/// The `defaultMounting()` orientation for a `TrackerPosition` id — the standard
+/// SlimeVR `defaultMounting()` port. (HaritoraX→SlimeVR frame translation is done
+/// by the bridge/Shora, not the server.)
 pub fn default_mounting(position: u8) -> UnitQuaternion<f32> {
     match position {
         // LEFT_LOWER_ARM, LEFT_HAND, left fingers → LEFT (90° yaw)
@@ -312,15 +320,20 @@ mod tests {
     }
 
     #[test]
-    fn full_reset_aligns_to_reference_yaw() {
+    fn full_reset_zeroes_pitch_roll_and_aligns_yaw() {
+        // A full reset removes the reset pose's pitch/roll (up becomes +Y) and
+        // aligns the yaw to the reference.
         let raw = yaw_quat(1.2) * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), 0.3);
         let reference = yaw_quat(0.1);
 
         let mut c = TrackerCalibration::default();
         c.full_reset(raw, reference);
 
-        // After full reset, the tracker's yaw matches the reference's yaw.
+        // Up is corrected (pitch/roll removed) …
         let adjusted = c.adjust(raw);
+        let up = adjusted * Vector3::y();
+        assert!((up - Vector3::y()).norm() < 1e-3, "up = {up:?}");
+        // … and the yaw is aligned to the reference.
         assert!(yaw_close(&adjusted, &reference, 1e-4), "adjusted yaw {}", yaw_of(&adjusted));
     }
 
