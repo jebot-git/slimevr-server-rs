@@ -74,7 +74,7 @@ fn error(
     // Feet height consistency (foot-plant / slide error).
     let mut feet_y = Vec::with_capacity(frames.len());
     for frame in frames {
-        let pose = solve_pose_with_lengths(frame.trackers.iter().cloned(), calib, *lengths);
+        let pose = solve_pose_with_lengths(frame.trackers.iter().cloned(), calib, *lengths, None);
         let l = tail_pos(&pose, 10); // LEFT_FOOT
         let r = tail_pos(&pose, 11); // RIGHT_FOOT
         if let (Some(l), Some(r)) = (l, r) {

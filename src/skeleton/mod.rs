@@ -12,6 +12,7 @@ use skeletal_model::skeleton::SkeletonConfig;
 use skeletal_model::{BoneKind, BoneMap, Skeleton};
 
 use crate::calibration::Calibration;
+use crate::feeder::HmdPose;
 use crate::tracker::Tracker;
 
 /// Map a SlimeVR `TrackerPosition` id (from SENSOR_INFO) to the bone it drives.
@@ -102,14 +103,16 @@ pub struct BonePose {
 ///
 /// Each tracker's raw rotation is first adjusted by its mounting offset and the
 /// global heading (see [`Calibration`]), then fed as its bone's global rotation.
-/// The FK solver fills in every untracked bone. `height_m` drives the autobone
-/// bone lengths.
+/// The HMD anchors the head (position + rotation), matching the Java server's
+/// head tracking, so the solved pose is in the tracking frame. `height_m` drives
+/// the autobone bone lengths.
 pub fn solve_pose(
     trackers: impl Iterator<Item = Tracker>,
     calib: &Calibration,
     height_m: f32,
+    hmd: Option<&HmdPose>,
 ) -> HashMap<u8, BonePose> {
-    solve_pose_with_lengths(trackers, calib, bone_lengths_from_height(height_m))
+    solve_pose_with_lengths(trackers, calib, bone_lengths_from_height(height_m), hmd)
 }
 
 /// Like [`solve_pose`], but with explicit bone lengths (used by autobone).
@@ -117,8 +120,21 @@ pub fn solve_pose_with_lengths(
     trackers: impl Iterator<Item = Tracker>,
     calib: &Calibration,
     lengths: BoneMap<f32>,
+    hmd: Option<&HmdPose>,
 ) -> HashMap<u8, BonePose> {
     let mut skeleton = Skeleton::new(&SkeletonConfig::new(lengths));
+
+    // Anchor the head at the HMD pose (tracking frame). The body trackers then
+    // FK from it, overriding the head's pitch/roll so the body stays upright.
+    if let Some(h) = hmd {
+        let hmd_rot =
+            UnitQuaternion::from_quaternion(Quaternion::new(h[6], h[3], h[4], h[5]));
+        skeleton.attach_input_tracker(
+            BoneKind::Neck,
+            [hmd_rot.w, hmd_rot.i, hmd_rot.j, hmd_rot.k],
+        );
+        skeleton.set_root_position(skeletal_model::Point::new(h[0], h[1], h[2]));
+    }
 
     for t in trackers {
         if let (Some(bone), Some(raw)) = (bone_kind_for_position(t.position), t.rotation) {
@@ -189,7 +205,7 @@ mod tests {
             accel: None,
             last_seen: std::time::Instant::now(),
         };
-        let pose = solve_pose(std::iter::once(t), &Calibration::new(), 1.80);
+        let pose = solve_pose(std::iter::once(t), &Calibration::new(), 1.80, None);
         // All 21 bones map to a SolarXR body part.
         assert_eq!(pose.len(), 21);
         assert!(pose.contains_key(&3)); // chest

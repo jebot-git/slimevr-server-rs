@@ -103,7 +103,8 @@ async fn main() -> anyhow::Result<()> {
         let new_pose = {
             let calib = calib.read().unwrap();
             let lengths = lengths.read().unwrap();
-            skeleton::solve_pose_with_lengths(trackers.clone().into_iter(), &calib, *lengths)
+            let hmd = *hmd.read().unwrap();
+            skeleton::solve_pose_with_lengths(trackers.clone().into_iter(), &calib, *lengths, hmd.as_ref())
         };
         *pose.write().unwrap() = new_pose;
 

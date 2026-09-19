@@ -148,8 +148,7 @@ async fn handle_connection(
                                             DataFeedMessage::PollDataFeed => {
                                                 tracing::debug!("SolarXR PollDataFeed received; sending update");
                                                 let pose = pose.read().unwrap().clone();
-                                                let hmd = *hmd.read().unwrap();
-                                                if let Some(bytes) = build_bone_feed(&pose, hmd.as_ref()) {
+                                                if let Some(bytes) = build_bone_feed(&pose) {
                                                     let _ = write_message(&mut write, &bytes).await;
                                                 }
                                             }
@@ -229,8 +228,7 @@ async fn handle_connection(
             _ = tick.tick() => {
                 if streaming {
                     let pose = pose.read().unwrap().clone();
-                    let hmd = *hmd.read().unwrap();
-                    if let Some(bytes) = build_bone_feed(&pose, hmd.as_ref()) {
+                    if let Some(bytes) = build_bone_feed(&pose) {
                         if write_message(&mut write, &bytes).await.is_err() {
                             break;
                         }
@@ -295,8 +293,9 @@ fn bone_tail_pos(bp: &BonePose) -> [f32; 3] {
 }
 
 /// Build a `MessageBundle` containing a `DataFeedUpdate` with the bone feed and
-/// the computed synthetic trackers (emulated Vive trackers).
-fn build_bone_feed(pose: &Pose, hmd: Option<&HmdPose>) -> Option<Vec<u8>> {
+/// the computed synthetic trackers (emulated Vive trackers). The pose is already
+/// in the tracking frame (the head is anchored at the HMD during the solve).
+fn build_bone_feed(pose: &Pose) -> Option<Vec<u8>> {
     let mut fbb = flatbuffers::FlatBufferBuilder::new();
 
     let mut bones = Vec::with_capacity(pose.len());
@@ -317,40 +316,19 @@ fn build_bone_feed(pose: &Pose, hmd: Option<&HmdPose>) -> Option<Vec<u8>> {
     let bones_vec = fbb.create_vector(&bones);
 
     let mut trackers = Vec::with_capacity(COMPUTED_TRACKERS.len());
-    // The HMD pose (from the feeder) anchors the skeleton in the tracking frame:
-    // local bone positions/rotations are transformed by the HMD's 6-DoF pose.
-    let hmd_pose = hmd.map(|h| {
-        (
-            nalgebra::Vector3::new(h[0], h[1], h[2]),
-            nalgebra::UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
-                h[6], h[3], h[4], h[5],
-            )),
-        )
-    });
     for (i, &(tracker_part, src_bone, use_tail)) in COMPUTED_TRACKERS.iter().enumerate() {
         let Some(src) = pose.get(&src_bone) else {
             continue;
         };
-        let local_pos = if use_tail {
+        // The skeleton is solved in the tracking frame (head anchored at the
+        // HMD pose), so the bone tail/head positions and rotations are used
+        // directly.
+        let pos = if use_tail {
             bone_tail_pos(src)
         } else {
             src.head_pos
         };
-        let local_rot = src.rotation;
-
-        // The skeleton is solved in the tracking frame (up = +Y, bones going
-        // down -Y), with yaw already aligned to the HMD via the full reset's
-        // yaw-fix. Anchor it only at the HMD's *position*; re-applying the HMD
-        // rotation here would tilt the skeleton with the head (laying it flat
-        // when looking down) and double the head yaw.
-        let (pos, rot) = match &hmd_pose {
-            Some((hmd_pos, _)) => {
-                let lp = nalgebra::Vector3::new(local_pos[0], local_pos[1], local_pos[2]);
-                let gp = hmd_pos + lp;
-                ([gp.x, gp.y, gp.z], local_rot)
-            }
-            None => (local_pos, local_rot),
-        };
+        let rot = src.rotation;
 
         let quat = Quat::new(rot.i, rot.j, rot.k, rot.w);
         let position = Vec3f::new(pos[0], pos[1], pos[2]);
@@ -668,7 +646,7 @@ mod tests {
             },
         );
 
-        let bytes = build_bone_feed(&pose, None).unwrap();
+        let bytes = build_bone_feed(&pose).unwrap();
         let bundle = flatbuffers::root::<MessageBundle>(&bytes).unwrap();
 
         let msgs = bundle.data_feed_msgs().unwrap();
