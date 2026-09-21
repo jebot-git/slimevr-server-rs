@@ -41,6 +41,23 @@ impl Decoder {
         }
         names.into_iter().map(|name| HaritoraXEvent::TrackerDisconnected { name }).collect()
     }
+
+    pub fn missing_settings_ports(&self) -> Vec<char> {
+        self.assignment.keys().filter(|id| !self.settings.contains_key(id)).copied().collect()
+    }
+
+    /// Preserve the settings, pulse the power-off digit, then restore the original
+    /// frame, matching haritorax-interpreter's powerOffTracker sequence.
+    pub fn power_off_commands(&self) -> anyhow::Result<Vec<(String, String)>> {
+        anyhow::ensure!(self.missing_settings_ports().is_empty(),
+            "Tracker settings not received yet; retry shutdown shortly");
+        let mut ports: Vec<_> = self.assignment.keys().copied().collect();
+        ports.sort_unstable();
+        Ok(ports.into_iter().map(|id| {
+            let hex = &self.settings[&id];
+            (format!("o{id}:{}2{}", &hex[..12], &hex[13..]), format!("o{id}:{hex}"))
+        }).collect())
+    }
 }
 
 /// Parse a single hex digit character into its value (0–15).
@@ -233,6 +250,21 @@ pub fn discover_dongle_ports() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_preserves_settings_and_targets_physical_trackers_once() {
+        let mut decoder = Decoder::default();
+        assert!(decoder.power_off_commands().unwrap().is_empty());
+        decoder.line("R0:0000300000", true);
+        assert!(decoder.power_off_commands().is_err());
+        decoder.line("O0:invalid_______", true);
+        assert!(decoder.power_off_commands().is_err());
+        decoder.line("O0:0123456789abcd", true);
+        decoder.line("O1:ffffffffffffff", true); // Unassigned channel is not a tracker.
+        assert_eq!(decoder.power_off_commands().unwrap(),
+            vec![("o0:0123456789ab2d".into(), "o0:0123456789abcd".into())]);
+        assert_eq!(decoder.power_off_commands().unwrap().len(), 1);
+    }
 
     fn frame(bytes: &[u8]) -> String {
         format!("X0:{}", base64::engine::general_purpose::STANDARD.encode(bytes))

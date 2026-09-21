@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+app_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+bundle="$app_dir/usr/lib/shora-qt"
+export LD_LIBRARY_PATH="$bundle/_internal${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export SLIMEVR_SERVER_BIN="$bundle/_internal/bin/slimevr-server-rs"
+case "${1:-}" in
+    --server) shift; exec "$SLIMEVR_SERVER_BIN" "$@" ;;
+    --proxy) shift; exec "$bundle/_internal/bin/shora-proxy" "$@" ;;
+esac
+exec "$bundle/shora-qt" "$@"

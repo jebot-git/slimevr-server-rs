@@ -35,6 +35,7 @@ impl TuiHandle {
                             KeyCode::Char('m') => Some(Command::MountingReset),
                             KeyCode::Char('p') => Some(Command::PauseTracking),
                             KeyCode::Char('r') => Some(Command::Restart),
+                            KeyCode::Char('s') => Some(Command::ShutdownTrackers),
                             _ => None,
                         };
                         if let Some(command) = command { let _ = commands.try_send(command.into()); }
@@ -100,7 +101,7 @@ fn draw(frame: &mut Frame<'_>, snapshot: &StatusSnapshot) {
     let ports = if snapshot.ports.is_empty() { "No serial ports open. Enable HaritoraX and press r to rescan.".into() }
         else { snapshot.ports.iter().map(|p| format!("{}: {}", p.path, if p.connected { "connected" } else { p.error.as_deref().unwrap_or("waiting") })).collect::<Vec<_>>().join("\n") };
     frame.render_widget(Paragraph::new(ports).block(Block::default().borders(Borders::ALL).title(" Serial input ")), areas[3]);
-    frame.render_widget(Paragraph::new(format!("y yaw · f full · m mounting · p pause · r reconnect/rescan · q quit\nLog: {}", snapshot.log_file.as_deref().unwrap_or("stderr")))
+    frame.render_widget(Paragraph::new(format!("y yaw · f full · m mounting · p pause · r reconnect/rescan · s trackers off · q quit\nLog: {}", snapshot.log_file.as_deref().unwrap_or("stderr")))
         .style(Style::default().fg(Color::DarkGray)), areas[4]);
 }
 

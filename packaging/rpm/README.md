@@ -21,9 +21,9 @@ Rust tests, real backend/proxy restart tests, and simulated serial/TUI/Qt smoke
 tests. It needs permission to bind local sockets and create pseudo terminals.
 
 ```bash
-sudo dnf install ./dist/slimevr-server-rs-0.1.0-1.fc44.x86_64.rpm \
-  ./dist/slimevr-server-rs-qt-0.1.0-1.fc44.noarch.rpm \
-  ./dist/slimevr-server-rs-wivrn-0.1.0-1.fc44.noarch.rpm
+sudo dnf install ./dist/slimevr-server-rs-0.1.1-1.fc44.x86_64.rpm \
+  ./dist/slimevr-server-rs-qt-0.1.1-1.fc44.noarch.rpm \
+  ./dist/slimevr-server-rs-wivrn-0.1.1-1.fc44.noarch.rpm
 ```
 
 The main package installs `slimevr-server-rs`, `shora-proxy`, and
@@ -64,6 +64,6 @@ The RPM never edits or removes these user files automatically.
 To rebuild from the source RPM on a compatible host with the build dependencies:
 
 ```bash
-rpmbuild --rebuild slimevr-server-rs-0.1.0-1.fc44.src.rpm
+rpmbuild --rebuild slimevr-server-rs-0.1.1-1.fc44.src.rpm
 sha256sum -c dist/SHA256SUMS
 ```

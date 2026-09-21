@@ -10,7 +10,7 @@ use crate::status::StatusHandle;
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
-    Status, YawReset, FullReset, MountingReset, PauseTracking, Restart, Shutdown,
+    Status, YawReset, FullReset, MountingReset, PauseTracking, Restart, ShutdownTrackers, Shutdown,
     SetSettings { settings: crate::settings::TrackingSettings },
     ClearDrift,
 }

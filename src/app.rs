@@ -81,6 +81,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             let result = match envelope.command {
                 Command::Status => Ok(()),
                 Command::Shutdown => { stop = true; Ok(()) }
+                Command::ShutdownTrackers => acquisition.shutdown_trackers().await,
                 Command::PauseTracking => { paused = !paused; Ok(()) }
                 Command::SetSettings { settings: next } => {
                     match next.validate() {
@@ -116,6 +117,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             };
             status.write().unwrap().last_action = match &result {
                 Ok(()) => match envelope.command { Command::SetSettings { .. } => "Tracking settings applied".into(),
+                    Command::ShutdownTrackers => "Tracker shutdown commands sent".into(),
                     other => format!("{other:?}") },
                 Err(e) => format!("{e:#}")
             };

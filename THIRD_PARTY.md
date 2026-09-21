@@ -20,8 +20,12 @@ It does not embed the complete SlimeTora application or JavaScript package.
   [MIT notice](licenses/haritorax-interpreter-MIT.txt).
 - Shora: MIT OR Apache-2.0; its MIT notice matches [LICENSE-MIT](LICENSE-MIT).
 
-The optional Qt frontend uses separately installed PySide6. Qt/PySide6 retain
-their own upstream licensing; they are not relicensed by this project.
+The optional Qt frontend uses separately installed PySide6 in the RPM and source
+installations. DEB and AppImage builds bundle Python and PySide6 Essentials;
+their notices and shared-library notices are included in the bundle's `licenses/`
+directory. See [portable packaging](packaging/linux/README.md) for versions,
+upstream sources and library replacement. Qt/PySide6 retain their own upstream
+licensing; they are not relicensed by this project.
 
 ## oscavmgr face/eye integration
 

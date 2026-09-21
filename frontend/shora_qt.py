@@ -261,12 +261,14 @@ class HubWindow(QMainWindow):
         self.command_buttons = {}
         for label, command in [("Yaw reset", "yaw_reset"), ("Full reset", "full_reset"),
                                ("Mounting reset", "mounting_reset"), ("Pause tracking", "pause_tracking"),
-                               ("Reconnect serial", "restart")]:
+                               ("Reconnect serial", "restart"), ("Shut down trackers", "shutdown_trackers")]:
             button = QPushButton(label)
             button.setEnabled(False)
             button.clicked.connect(lambda _, cmd=command: self.client.send(cmd))
             controls.addWidget(button)
             self.command_buttons[command] = button
+        self.command_buttons["shutdown_trackers"].setToolTip(
+            "Turn off connected HaritoraX trackers through GX6/GX2. The server stays running.")
         layout.addLayout(controls)
 
         self.tabs = QTabWidget()
@@ -404,6 +406,9 @@ class HubWindow(QMainWindow):
         self.cards["input"].setText(serial_status)
         self.command_buttons["pause_tracking"].setText("Resume tracking" if paused else "Pause tracking")
         self.command_buttons["restart"].setEnabled(bool(snapshot.get("haritorax_enabled")))
+        self.command_buttons["shutdown_trackers"].setEnabled(
+            bool(snapshot.get("haritorax_enabled")) and any(p.get("connected") for p in ports)
+            and any(t.get("active") and t.get("source", "").startswith("HaritoraX ") for t in trackers))
         self.trackers.setRowCount(len(trackers))
         for row, tracker in enumerate(trackers):
             battery = tracker.get("battery_percent")

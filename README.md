@@ -53,6 +53,11 @@ When `XDG_RUNTIME_DIR` is unset, socket paths default to `/run/user/1000/`.
 Override them with `--solarxr-socket PATH` and `--feeder-socket PATH` as needed.
 Configuration precedence is defaults → TOML file → CLI.
 
+DEB packages and an AppImage are also available for x86_64 Ubuntu 24.04+
+(glibc 2.39+), with Python and Qt bundled. See
+[DEB and AppImage packaging](packaging/linux/README.md) for installation,
+portable startup and rebuild instructions.
+
 ## Keep WiVRn attached across server restarts
 
 The optional **`shora-proxy`** process owns the two public sockets and reconnects
@@ -207,7 +212,8 @@ not full SlimeTora parity. Reused code and notices are in [THIRD_PARTY.md](THIRD
 `--ui tui` shows tracker IDs/assignments, sample ages, battery levels, serial port
 errors, face-source activity, and HMD status. It uses the existing Shora ratatui
 interface expanded for the native services. Keys: `y` yaw reset, `f` full reset,
-`m` mounting reset, `p` pause/resume body pose, `r` reconnect/rescan, `q` quit.
+`m` mounting reset, `p` pause/resume body pose, `r` reconnect/rescan,
+`s` shut down HaritoraX trackers, `q` quit.
 Pause freezes body output while input collection continues; face OSC continues.
 Logs go to `$XDG_RUNTIME_DIR/shora-rust.log` (or the system temporary directory),
 with `--log-file PATH` available to override it. Headless mode remains the default.
@@ -225,6 +231,12 @@ Choose a config file, serial model/ports and face source, then **Start server**.
 The window shows live trackers and logs and exposes the same calibration/pause/
 reconnect controls. Closing a window that launched the server stops its child;
 closing an attached window leaves the external server running.
+
+**Shut down trackers** powers off connected HaritoraX trackers through GX6/GX2
+while the server and face tracking stay running. Turn the trackers on manually
+to resume tracking. The button is enabled when active HaritoraX trackers are
+connected; generic SlimeVR UDP trackers do not support this command. Missing
+tracker settings or serial write failures are reported in the status message.
 
 The **Skeleton & calibration** tab renders the server's solved bone endpoints,
 including tracked versus inferred bones. Drag to orbit, scroll to zoom, or choose
@@ -282,7 +294,8 @@ does not automatically build the Rust server or install the OpenXR runtime.
 The optional control endpoint is an owner-only (`0600`) Unix socket. Send one
 JSON object per line, e.g. `{"command":"status"}`. Commands are `status`,
 `yaw_reset`, `full_reset`, `mounting_reset`, `pause_tracking`, `restart` (serial
-reconnect/rescan), and `shutdown`. Replies contain `ok`, `error`, and `status`.
+reconnect/rescan), `shutdown_trackers` (HaritoraX power-off), and `shutdown`
+(stop the server). Replies contain `ok`, `error`, and `status`.
 Calibration without tracker samples returns an error. This API is separate from
 the existing SolarXR and feeder sockets; it is not a SlimeVR RPC replacement.
 Status also includes `bones` (body part, head/tail positions, quaternion, length,

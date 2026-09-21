@@ -2,7 +2,7 @@
 # Rust dependencies are vendored in Source0; no network is used by rpmbuild.
 
 Name:           slimevr-server-rs
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        Native Rust full-body tracking server and persistent socket proxy
 License:        MIT AND Apache-2.0 AND BSD-3-Clause AND MPL-2.0 AND Unicode-3.0 AND Zlib
@@ -117,5 +117,9 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/shora-qt.desktop
 %{_userunitdir}/wivrn.service.d/shora.conf
 
 %changelog
+* Mon Sep 21 2026 jebot-git <326713999+jebot-git@users.noreply.github.com> - 0.1.1-1
+- Add connected HaritoraX tracker shutdown controls.
+- Add Ubuntu DEB and portable AppImage packaging.
+
 * Mon Sep 21 2026 jebot-git <326713999+jebot-git@users.noreply.github.com> - 0.1.0-1
 - Package native tracking, Qt6 frontend, face translation and WiVRn reconnect proxy.

@@ -54,6 +54,7 @@ def serial_frame(master):
     struct.pack_into("<h", data, 22, -15588)
     os.write(master, b"r0:0000300000\nX0:" + base64.b64encode(data) + b"\n")
     os.write(master, b'v0:{"battery voltage":3900,"battery remaining":75}\n')
+    os.write(master, b"o0:0123456789abcd\n")
 
 
 def config_file(directory, slave):
@@ -95,6 +96,7 @@ def backend_test(binary):
                 assert stat.S_IMODE(control.stat().st_mode) == 0o600
                 assert not request(control, "yaw_reset")["ok"]
                 assert not request(control, "unknown_command")["ok"]
+                assert not request(control, "shutdown_trackers")["ok"]
                 # Lose the initial identity response, then stream a leg frame
                 # before r0 arrives. The server must request identity again;
                 # a physical parent-tracker button/reset must not be required.
@@ -172,6 +174,21 @@ def backend_test(binary):
                 wait_for(lambda: (s := status(control)) and s["ports"][0]["connected"])
                 serial_frame(master)
                 wait_for(lambda: check_trackers(status(control) or {}))
+                # The power-off pulse and restore must reach the actual serial
+                # worker, while the server and acquisition remain available.
+                while select.select([master], [], [], 0)[0]:
+                    os.read(master, 4096)
+                assert request(control, "shutdown_trackers")["ok"]
+                shutdown_bytes = bytearray()
+                def shutdown_written():
+                    if select.select([master], [], [], 0)[0]:
+                        shutdown_bytes.extend(os.read(master, 4096))
+                    return b"\no0:0123456789ab2d\n\no0:0123456789abcd\n" in shutdown_bytes
+                wait_for(shutdown_written)
+                assert process.poll() is None and status(control)["ports"][0]["connected"]
+                serial_frame(master)
+                wait_for(lambda: check_trackers(status(control) or {}))
+                print("PASS tracker power-off writes settings pulse/restore and keeps server alive")
                 os.close(master)
                 master = None
                 wait_for(lambda: (s := status(control)) and not s["ports"][0]["connected"] and not s["trackers"])
@@ -279,6 +296,7 @@ def qt_test(binary):
         try:
             window.start_button.click()
             wait(lambda: window.last_snapshot and window.last_snapshot["ports"] and window.last_snapshot["ports"][0]["connected"])
+            assert not window.command_buttons["shutdown_trackers"].isEnabled()
             assert window.last_snapshot["face_output"] == "both"
             address = b"/jawOpen\0"
             face_sink.sendto(address + b"\0" * (-len(address) % 4) + b",f\0\0" + struct.pack(">f", 0.65), ("127.0.0.1", babble_port))
@@ -340,6 +358,11 @@ def qt_test(binary):
             wait(lambda: window.last_snapshot and window.last_snapshot["paused"])
             window.command_buttons["full_reset"].click()
             wait(lambda: window.last_snapshot and window.last_snapshot["last_action"] == "FullReset")
+            serial_frame(master)
+            wait(lambda: window.command_buttons["shutdown_trackers"].isEnabled())
+            window.command_buttons["shutdown_trackers"].click()
+            wait(lambda: window.last_snapshot["last_action"] == "Tracker shutdown commands sent")
+            assert window.process.state() == QProcess.ProcessState.Running
             window.grab().save("/tmp/shora-qt-live.png")
             # A second, attached window must not stop a server it did not launch.
             attached = HubWindow(socket_path=str(control), attach=True)
@@ -354,6 +377,7 @@ def qt_test(binary):
             assert window.process.exitCode() == 0
             assert not control.exists()
             assert not panel.preview.bones and not panel.apply_button.isEnabled()
+            assert not window.command_buttons["shutdown_trackers"].isEnabled()
             print("PASS Qt launch, live tracker table, pause/reset, attach-only close, graceful stop")
             broken = directory / "broken-server"
             broken.write_text("#!/nonexistent-shora-test-interpreter\n")
