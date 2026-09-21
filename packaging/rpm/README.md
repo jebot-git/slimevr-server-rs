@@ -21,9 +21,9 @@ Rust tests, real backend/proxy restart tests, and simulated serial/TUI/Qt smoke
 tests. It needs permission to bind local sockets and create pseudo terminals.
 
 ```bash
-sudo dnf install ./dist/slimevr-server-rs-0.1.1-1.fc44.x86_64.rpm \
-  ./dist/slimevr-server-rs-qt-0.1.1-1.fc44.noarch.rpm \
-  ./dist/slimevr-server-rs-wivrn-0.1.1-1.fc44.noarch.rpm
+sudo dnf install ./dist/slimevr-server-rs-0.1.1-2.fc44.x86_64.rpm \
+  ./dist/slimevr-server-rs-qt-0.1.1-2.fc44.noarch.rpm \
+  ./dist/slimevr-server-rs-wivrn-0.1.1-2.fc44.noarch.rpm
 ```
 
 The main package installs `slimevr-server-rs`, `shora-proxy`, and
@@ -55,15 +55,32 @@ Calibration is session-local and must be repeated after a backend restart.
 
 If migrating from the checkout-based units, user files in
 `~/.config/systemd/user/` take precedence over the packaged files in
-`/usr/lib/systemd/user/`. Back up/remove the local `shora-server.service`,
-`shora-proxy.service`, and `wivrn.service.d/shora.conf` when ready to switch;
-preserve `~/.config/shora-rust/server.toml`. Stop those services before removing
-their local unit definitions, then reload the manager and restart WiVRn.
-The RPM never edits or removes these user files automatically.
+`/usr/lib/systemd/user/`. After installing/upgrading the server and WiVRn
+packages, run as your desktop user, **without sudo**:
+
+```bash
+shora-use-packaged-services
+```
+
+This backs up the local `shora-server.service`, `shora-proxy.service`, and
+`wivrn.service.d/shora.conf` under a private `shora-package-backup-*` directory
+in your systemd user configuration, removes those overrides, and reloads the
+manager. Active backend/proxy/WiVRn services are stopped and started again;
+this interrupts WiVRn and resets calibration. Inactive services remain stopped.
+Existing `~/.config/shora-rust/server.toml` and other custom drop-ins are
+preserved. Unit masks are refused. If activation fails, the old unit files are
+restored. Review any preserved custom drop-ins if they override executable
+paths; the command prints the effective unit paths and commands after migration.
+`XDG_CONFIG_HOME` is respected. Package installation itself never edits user
+files or restarts active sessions.
+
+The 0.1.1-2 package revision includes this migration command and corrects the
+example service files to use the installed package paths. Existing 0.1.1-1 users
+can upgrade normally and then run the command once.
 
 To rebuild from the source RPM on a compatible host with the build dependencies:
 
 ```bash
-rpmbuild --rebuild slimevr-server-rs-0.1.1-1.fc44.src.rpm
+rpmbuild --rebuild slimevr-server-rs-0.1.1-2.fc44.src.rpm
 sha256sum -c dist/SHA256SUMS
 ```

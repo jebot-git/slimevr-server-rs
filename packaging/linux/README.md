@@ -22,17 +22,20 @@ selected output directory; use a fresh directory for each release.
 ## DEB
 
 ```bash
-sudo apt install ./slimevr-server-rs_0.1.1-1_amd64.deb \
-  ./slimevr-server-rs-qt_0.1.1-1_amd64.deb
+sudo apt install ./slimevr-server-rs_0.1.1-2_amd64.deb \
+  ./slimevr-server-rs-qt_0.1.1-2_amd64.deb
 systemctl --user daemon-reload
 systemctl --user start shora-server.service
 shora-qt --attach
 ```
 
 For automatic WiVRn startup/proxy integration, optionally install
-`slimevr-server-rs-wivrn_0.1.1-1_amd64.deb`. It depends on a native `wivrn`
+`slimevr-server-rs-wivrn_0.1.1-2_amd64.deb`. It depends on a native `wivrn`
 package and installs the same user units as the RPM integration package.
-Follow the service setup and migration instructions in
+For existing checkout-based units, run `shora-use-packaged-services` as your
+desktop user after installing both packages. It backs up the local overrides
+and restarts active services using the packaged units. Follow the service setup
+and migration instructions in
 [`../rpm/README.md`](../rpm/README.md). Installing packages does not start or
 restart services. Existing profiles are preserved. Run `shora-qt` without
 `--attach` to launch a standalone backend from the window instead.

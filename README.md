@@ -111,24 +111,27 @@ to Qt and preserves its calibration. A proxy failure also stops WiVRn through it
 `Requires=` dependency, because losing the public sockets requires a new runtime
 connection.
 
-The units assume this checkout is at `~/shora/slimevr-server-rs` and release
-binaries are built with `face-xr`. Adjust paths if necessary. The backend reads
-`~/.config/shora-rust/server.toml`; create a profile from `config.example.toml`
-and set the desired tuning, HaritoraX, and face options before first startup.
-Socket paths are set by the unit's command line. Install the units with:
+The units use the installed RPM/DEB binaries in `/usr/bin` and readiness helpers
+in `/usr/libexec/slimevr-server-rs`; they do not depend on this checkout or its
+`target/release` directory. Install the server and WiVRn integration packages
+using the [RPM](packaging/rpm/README.md) or [DEB](packaging/linux/README.md) guide.
+The packages already install the units; do not copy them into your user config.
+The backend reads `~/.config/shora-rust/server.toml`, creating a default profile
+on first startup if one does not exist. Socket paths are set by the unit's
+command line.
+
+If you previously copied the checkout-based units, switch them as your desktop
+user (without sudo). This backs up the local unit files and restarts any active
+services, briefly interrupting WiVRn and resetting backend calibration:
 
 ```bash
-install -Dm644 examples/systemd/shora-proxy.service \
-  "$HOME/.config/systemd/user/shora-proxy.service"
-install -Dm644 examples/systemd/shora-server.service \
-  "$HOME/.config/systemd/user/shora-server.service"
-install -Dm644 examples/systemd/wivrn.service.d/shora.conf \
-  "$HOME/.config/systemd/user/wivrn.service.d/shora.conf"
-systemctl --user daemon-reload
-systemctl --user enable wivrn.service
-# Stop the previous backend using the public sockets before this first switch.
-systemctl --user restart wivrn.service
+shora-use-packaged-services
+systemctl --user enable --now wivrn.service
 ```
+
+For a fresh installation, run `systemctl --user daemon-reload` followed by
+`systemctl --user enable --now wivrn.service`. Stop any standalone backend using
+the public sockets before starting the services.
 
 The proxy/backend units do not need separate enablement: WiVRn starts them on
 demand, including on login when WiVRn is enabled. For subsequent backend updates:

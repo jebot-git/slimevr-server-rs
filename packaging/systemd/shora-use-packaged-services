@@ -1,0 +1,83 @@
+#!/usr/bin/python3
+"""Back up local Shora unit overrides and switch to installed package units.
+
+Run as your desktop user after installing the server and WiVRn packages.
+Active services are restarted, interrupting WiVRn and resetting calibration.
+Inactive services remain stopped. Profiles and other drop-ins are untouched.
+"""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+
+UNITS = ("wivrn.service", "shora-proxy.service", "shora-server.service")
+OVERRIDES = ("shora-server.service", "shora-proxy.service", "wivrn.service.d/shora.conf")
+
+
+def systemctl(*args):
+    return subprocess.check_output(["systemctl", "--user", *args], text=True).strip()
+
+
+def migrate(local, vendor, ctl=systemctl):
+    # Preflight before stopping services or changing any user files.
+    for name in OVERRIDES:
+        if not (vendor / name).is_file():
+            raise RuntimeError(f"Missing {vendor / name}; install the server and WiVRn packages first")
+    overrides = [name for name in OVERRIDES
+                 if (local / name).exists() or (local / name).is_symlink()]
+    for name in overrides:
+        path = local / name
+        if path.resolve() == Path("/dev/null") or (not path.is_symlink() and not path.is_file()):
+            raise RuntimeError(f"Refusing to replace masked or non-file unit: {path}")
+    if not overrides:
+        ctl("daemon-reload")
+        print("No local Shora unit files to migrate.")
+        return
+
+    active = [unit for unit in UNITS if ctl("show", unit, "-p", "ActiveState", "--value")
+              in ("active", "activating", "reloading")]
+    backup = Path(tempfile.mkdtemp(prefix="shora-package-backup-", dir=local))
+    for name in overrides:
+        destination = backup / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(local / name, destination, follow_symlinks=False)
+    print(f"Local unit backup: {backup}", flush=True)
+    removed = []
+    try:
+        if active:
+            ctl("stop", *active)
+        for name in overrides:
+            (local / name).unlink()
+            removed.append(name)
+        ctl("daemon-reload")
+        if active:
+            ctl("start", *active)
+    except Exception:
+        # Restore the old unit definitions if activation of the package fails.
+        for name in removed:
+            shutil.copy2(backup / name, local / name, follow_symlinks=False)
+        ctl("daemon-reload")
+        if active:
+            ctl("start", *active)
+        raise
+    print("Using packaged Shora units. Existing profiles have been preserved.")
+    print(ctl("show", "shora-server.service", "shora-proxy.service",
+              "-p", "FragmentPath", "-p", "ExecStart", "-p", "DropInPaths"))
+
+
+def main():
+    argparse.ArgumentParser(description=__doc__).parse_args()
+    if os.geteuid() == 0:
+        raise SystemExit("Run as your desktop user, without sudo.")
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    try:
+        migrate(config / "systemd/user", Path("/usr/lib/systemd/user"))
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
+        raise SystemExit(str(error)) from error
+
+
+if __name__ == "__main__":
+    main()

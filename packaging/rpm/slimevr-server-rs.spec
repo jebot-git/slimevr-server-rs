@@ -3,7 +3,7 @@
 
 Name:           slimevr-server-rs
 Version:        0.1.1
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Native Rust full-body tracking server and persistent socket proxy
 License:        MIT AND Apache-2.0 AND BSD-3-Clause AND MPL-2.0 AND Unicode-3.0 AND Zlib
 URL:            https://github.com/jebot-git/slimevr-server-rs
@@ -59,6 +59,7 @@ cargo build --frozen --release --features face-xr --bins -j %{_smp_build_ncpus}
 install -Dpm755 target/release/slimevr-server-rs %{buildroot}%{_bindir}/slimevr-server-rs
 install -Dpm755 target/release/shora-proxy %{buildroot}%{_bindir}/shora-proxy
 strip --strip-unneeded %{buildroot}%{_bindir}/slimevr-server-rs %{buildroot}%{_bindir}/shora-proxy
+install -Dpm755 packaging/systemd/shora-use-packaged-services %{buildroot}%{_bindir}/shora-use-packaged-services
 install -Dpm755 packaging/rpm/shora-qt %{buildroot}%{_bindir}/shora-qt
 install -d %{buildroot}%{_datadir}/%{name}/frontend
 install -pm644 frontend/*.py %{buildroot}%{_datadir}/%{name}/frontend/
@@ -75,6 +76,7 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications packaging/rpm/sh
 cp packaging/rpm/README.md RPM.md
 
 %check
+python3 tests/package_services.py
 export CARGO_HOME="$PWD/.cargo-home"
 export CARGO_TARGET_DIR="$PWD/target"
 cargo test --frozen --release --workspace --features face-xr -j %{_smp_build_ncpus}
@@ -98,6 +100,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/shora-qt.desktop
 %doc README.md ROADMAP.md THIRD_PARTY.md RPM.md
 %{_bindir}/slimevr-server-rs
 %{_bindir}/shora-proxy
+%{_bindir}/shora-use-packaged-services
 %dir %{_datadir}/%{name}
 %{_datadir}/%{name}/config.example.toml
 %{_datadir}/%{name}/service-default.toml
@@ -117,6 +120,10 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/shora-qt.desktop
 %{_userunitdir}/wivrn.service.d/shora.conf
 
 %changelog
+* Mon Sep 21 2026 jebot-git <326713999+jebot-git@users.noreply.github.com> - 0.1.1-2
+- Use installed package paths in example systemd units.
+- Add per-user migration with backups for checkout-based unit overrides.
+
 * Mon Sep 21 2026 jebot-git <326713999+jebot-git@users.noreply.github.com> - 0.1.1-1
 - Add connected HaritoraX tracker shutdown controls.
 - Add Ubuntu DEB and portable AppImage packaging.

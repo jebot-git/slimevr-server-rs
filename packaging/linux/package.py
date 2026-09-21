@@ -13,6 +13,7 @@ ROOT = Path("/source")
 BUILD = Path("/build")
 OUT = Path("/output")
 VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
+PACKAGE_VERSION = f"{VERSION}-2"
 JOBS = os.environ.get("BUILD_JOBS", "8")
 os.environ["CARGO_TARGET_DIR"] = str(BUILD / "target")
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -67,7 +68,7 @@ def deb(root, name, description, depends):
     control.mkdir()
     size = sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) // 1024
     (control / "control").write_text(f"""Package: {name}
-Version: {VERSION}-1
+Version: {PACKAGE_VERSION}
 Architecture: amd64
 Maintainer: jebot-git <326713999+jebot-git@users.noreply.github.com>
 Section: utils
@@ -78,12 +79,13 @@ Homepage: https://github.com/jebot-git/slimevr-server-rs
 Description: {description}
  Native SlimeVR-compatible full-body, HaritoraX and face tracking for WiVRn.
 """)
-    artifact = OUT / f"{name}_{VERSION}-1_amd64.deb"
+    artifact = OUT / f"{name}_{PACKAGE_VERSION}_amd64.deb"
     run("dpkg-deb", "--root-owner-group", "--build", str(root), str(artifact))
     run("dpkg-deb", "--info", str(artifact))
 
 
 def main():
+    run("python3", "tests/package_services.py")
     run("cargo", "build", "--frozen", "--release", "--features", "face-xr", "--bins", "-j", JOBS)
     run("cargo", "test", "--frozen", "--release", "--workspace", "--features", "face-xr", "-j", JOBS)
     binary = BUILD / "target/release/slimevr-server-rs"
@@ -106,6 +108,7 @@ def main():
     for path in (binary, proxy):
         install(path, server / "usr/bin" / path.name, True)
         run("strip", "--strip-unneeded", str(server / "usr/bin" / path.name))
+    install(ROOT / "packaging/systemd/shora-use-packaged-services", server / "usr/bin/shora-use-packaged-services", True)
     shared = server / "usr/share/slimevr-server-rs"
     for name in ("config.example.toml", "README.md", "THIRD_PARTY.md"):
         install(ROOT / name, shared / name)
@@ -131,13 +134,13 @@ def main():
     run("desktop-file-validate", str(entry))
     install(ROOT / "packaging/linux/shora.svg", qt / "usr/share/icons/hicolor/scalable/apps/shora.svg")
     deb(qt, "slimevr-server-rs-qt", "Shora Qt6 skeleton preview and calibration frontend",
-        f"slimevr-server-rs (= {VERSION}-1), libc6 (>= 2.39), libgl1, libegl1, libfontconfig1, libdbus-1-3, libxkbcommon0, libx11-6")
+        f"slimevr-server-rs (= {PACKAGE_VERSION}), libc6 (>= 2.39), libgl1, libegl1, libfontconfig1, libdbus-1-3, libxkbcommon0, libx11-6")
 
     wivrn = fresh(BUILD / "deb-wivrn")
     install(ROOT / "packaging/rpm/shora-proxy.service", wivrn / "usr/lib/systemd/user/shora-proxy.service")
     install(ROOT / "examples/systemd/wivrn.service.d/shora.conf", wivrn / "usr/lib/systemd/user/wivrn.service.d/shora.conf")
     deb(wivrn, "slimevr-server-rs-wivrn", "Shora WiVRn user-service integration",
-        f"slimevr-server-rs (= {VERSION}-1), wivrn")
+        f"slimevr-server-rs (= {PACKAGE_VERSION}), wivrn")
 
     appdir = fresh(BUILD / "Shora.AppDir")
     shutil.copytree(frozen, appdir / "usr/lib/shora-qt", symlinks=True)
