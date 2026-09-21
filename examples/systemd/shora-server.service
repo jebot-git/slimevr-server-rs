@@ -1,0 +1,16 @@
+# Independent backend: restarting it must not restart WiVRn or shora-proxy.
+# WiVRn pulls this unit in; it can also be started manually for Qt/TUI use.
+[Unit]
+Description=Shora Rust tracking server
+
+[Service]
+Type=simple
+WorkingDirectory=%h/shora/slimevr-server-rs
+Environment=XR_RUNTIME_JSON=/usr/share/openxr/1/openxr_wivrn.json
+Environment=XDG_RUNTIME_DIR=%t
+ExecStart=%h/shora/slimevr-server-rs/target/release/slimevr-server-rs --config %h/.config/shora-rust/server.toml --solarxr-socket %t/SlimeVRRpc.backend --feeder-socket %t/SlimeVRInput.backend --control-socket %t/SlimeVRControl
+ExecStartPost=/usr/bin/python3 %h/shora/slimevr-server-rs/examples/systemd/wait-sockets.py %t/SlimeVRRpc.backend %t/SlimeVRInput.backend %t/SlimeVRControl
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=20
+UMask=0077

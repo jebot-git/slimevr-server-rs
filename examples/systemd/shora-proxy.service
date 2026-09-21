@@ -1,0 +1,16 @@
+# Install alongside wivrn.service.d/shora.conf and shora-server.service.
+# The proxy follows WiVRn, never the tracking backend.
+[Unit]
+Description=Persistent WiVRn tracking socket proxy
+BindsTo=wivrn.service
+PartOf=wivrn.service
+Before=wivrn.service
+
+[Service]
+Type=simple
+ExecStart=%h/shora/slimevr-server-rs/target/release/shora-proxy --runtime-dir %t
+ExecStartPost=/usr/bin/python3 %h/shora/slimevr-server-rs/examples/systemd/wait-sockets.py %t/SlimeVRRpc %t/SlimeVRInput
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=20
+UMask=0077

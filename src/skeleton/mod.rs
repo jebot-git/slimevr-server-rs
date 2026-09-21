@@ -30,6 +30,9 @@ pub fn bone_kind_for_position(position: u8) -> Option<BoneKind> {
         12 => BoneKind::FootR,
         15 => BoneKind::UpperArmL,
         16 => BoneKind::UpperArmR,
+        // HaritoraX wrist extensions use SlimeVR LEFT/RIGHT_HAND positions.
+        17 => BoneKind::WristL,
+        18 => BoneKind::WristR,
         _ => return None,
     })
 }
@@ -138,7 +141,7 @@ pub fn solve_pose_with_lengths(
 
     for t in trackers {
         if let (Some(bone), Some(raw)) = (bone_kind_for_position(t.position), t.rotation) {
-            let adjusted = calib.adjust(t.mac, raw);
+            let adjusted = calib.adjust(t.id(), raw);
             skeleton.attach_input_tracker(bone, [adjusted.w, adjusted.i, adjusted.j, adjusted.k]);
         }
     }
@@ -198,6 +201,7 @@ mod tests {
         // (untracked bones inherit their parent's rotation).
         let t = Tracker {
             sensor_id: 0,
+            status: crate::tracker::SensorStatus::Ok,
             addr: "127.0.0.1:1".parse().unwrap(),
             mac: [0; 6],
             position: 4, // chest

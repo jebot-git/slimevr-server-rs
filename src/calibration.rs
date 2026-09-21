@@ -19,8 +19,7 @@ use std::time::Instant;
 
 use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
-/// A MAC address identifying a tracker.
-pub type Mac = [u8; 6];
+use crate::tracker::TrackerId;
 
 /// Seconds over which a yaw reset eases its correction in.
 const YAW_SMOOTH_SECS: f32 = 1.0;
@@ -42,6 +41,17 @@ pub struct DriftCompensator {
 }
 
 impl DriftCompensator {
+    fn clear(&mut self) {
+        self.drift_quat = UnitQuaternion::identity();
+        self.drift_duration = 0.0;
+        self.since = None;
+    }
+
+    fn configure(&mut self, enabled: bool, amount: f32) {
+        if self.enabled != enabled { self.clear(); }
+        self.enabled = enabled;
+        self.amount = amount;
+    }
     fn new() -> Self {
         Self {
             enabled: false,
@@ -80,8 +90,9 @@ impl DriftCompensator {
 /// Per-tracker calibration state.
 #[derive(Debug)]
 pub struct TrackerCalibration {
-    /// Fixed mounting orientation (tracker frame → bone frame). The SlimeVR
-    /// `HalfHorizontal`/`defaultMounting` conventions are a TODO; identity for now.
+    reset_count: u64,
+    /// Fixed mounting orientation (tracker frame → bone frame), using SlimeVR's
+    /// default mounting direction for the assigned body part.
     pub mounting_orientation: UnitQuaternion<f32>,
     gyro_fix: UnitQuaternion<f32>,
     attachment_fix: UnitQuaternion<f32>,
@@ -97,6 +108,7 @@ pub struct TrackerCalibration {
 impl Default for TrackerCalibration {
     fn default() -> Self {
         Self {
+            reset_count: 0,
             mounting_orientation: default_mounting(0),
             gyro_fix: UnitQuaternion::identity(),
             attachment_fix: UnitQuaternion::identity(),
@@ -118,6 +130,7 @@ impl TrackerCalibration {
     /// `gyro_fix` removes the body yaw, `attachment_fix` removes pitch/roll, and
     /// `yaw_fix` aligns the yaw to the reference (HMD).
     pub fn full_reset(&mut self, raw: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) {
+        self.reset_count += 1;
         let before = self.adjust_reference(raw);
 
         let mounting_adjusted = raw * self.mounting_orientation;
@@ -134,12 +147,14 @@ impl TrackerCalibration {
     /// Yaw reset: align only the yaw to `reference`, easing the correction in
     /// over [`YAW_SMOOTH_SECS`] instead of snapping.
     pub fn yaw_reset(&mut self, raw: UnitQuaternion<f32>, reference: UnitQuaternion<f32>) {
+        self.reset_count += 1;
         let before = self.adjust_reference(raw);
         let target = self.fix_yaw(raw * self.mounting_orientation, reference);
         self.yaw_fix_start = self.yaw_fix;
         self.yaw_fix = target;
         self.yaw_reset_since = Some(Instant::now());
-        let after = self.adjust_reference(raw);
+        // Learn the complete yaw correction, not the nearly-zero first eased step.
+        let after = self.adjust_reference_with_yaw(raw, self.yaw_fix);
         self.drift.record(&before, &after);
     }
 
@@ -154,7 +169,7 @@ impl TrackerCalibration {
         reference: UnitQuaternion<f32>,
         position: u8,
     ) {
-        let before = self.adjust_reference(raw);
+        self.reset_count += 1;
 
         let mut rot = raw * self.mounting_orientation;
         rot = self.gyro_fix * rot;
@@ -170,9 +185,8 @@ impl TrackerCalibration {
             yaw_angle -= std::f32::consts::PI;
         }
         self.mount_rot_fix = yaw_quat(yaw_angle);
-
-        let after = self.adjust_reference(raw);
-        self.drift.record(&before, &after);
+        // A mounting reset changes the bend axes while in a deliberate tilted
+        // pose. It is not a measurement of yaw drift between standing resets.
     }
 
     /// The corrected bone rotation: reference fixes then drift.
@@ -182,11 +196,15 @@ impl TrackerCalibration {
 
     /// The reference-adjustment chain (without drift).
     fn adjust_reference(&self, raw: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+        self.adjust_reference_with_yaw(raw, self.effective_yaw_fix())
+    }
+
+    fn adjust_reference_with_yaw(&self, raw: UnitQuaternion<f32>, yaw: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
         let mut rot = raw * self.mounting_orientation;
         rot = self.gyro_fix * rot;
         rot = rot * self.attachment_fix;
         rot = self.mount_rot_fix.inverse() * (rot * self.mount_rot_fix);
-        rot = self.effective_yaw_fix() * rot;
+        rot = yaw * rot;
         rot
     }
 
@@ -211,10 +229,16 @@ impl TrackerCalibration {
     }
 }
 
-/// The set of per-tracker calibrations, keyed by MAC.
-#[derive(Default)]
+/// The set of per-tracker calibrations, keyed by device MAC and sensor id.
 pub struct Calibration {
-    trackers: HashMap<Mac, TrackerCalibration>,
+    trackers: HashMap<TrackerId, TrackerCalibration>,
+    drift_enabled: bool,
+    drift_amount: f32,
+}
+impl Default for Calibration {
+    fn default() -> Self {
+        Self { trackers: HashMap::new(), drift_enabled: false, drift_amount: 0.5 }
+    }
 }
 
 impl Calibration {
@@ -223,22 +247,42 @@ impl Calibration {
     }
 
     /// The corrected bone rotation for a tracker.
-    pub fn adjust(&self, mac: Mac, raw: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+    pub fn adjust(&self, id: TrackerId, raw: UnitQuaternion<f32>) -> UnitQuaternion<f32> {
         self.trackers
-            .get(&mac)
+            .get(&id)
             .map(|t| t.adjust(raw))
             .unwrap_or(raw)
     }
 
     /// Get (or create) a tracker's calibration state.
-    pub fn tracker_mut(&mut self, mac: Mac) -> &mut TrackerCalibration {
-        self.trackers.entry(mac).or_default()
+    pub fn tracker_mut(&mut self, id: TrackerId) -> &mut TrackerCalibration {
+        let tracker = self.trackers.entry(id).or_default();
+        tracker.drift.configure(self.drift_enabled, self.drift_amount);
+        tracker
     }
 
     /// Set a tracker's mounting orientation from its body part (frame alignment).
-    pub fn set_mounting(&mut self, mac: Mac, position: u8) {
-        self.trackers.entry(mac).or_default().mounting_orientation =
+    pub fn set_mounting(&mut self, id: TrackerId, position: u8) {
+        self.tracker_mut(id).mounting_orientation =
             default_mounting(position);
+    }
+
+    pub fn configure_drift(&mut self, enabled: bool, amount: f32) {
+        self.drift_enabled = enabled;
+        self.drift_amount = amount;
+        for tracker in self.trackers.values_mut() { tracker.drift.configure(enabled, amount); }
+    }
+
+    pub fn clear_drift(&mut self) {
+        for tracker in self.trackers.values_mut() { tracker.drift.clear(); }
+    }
+
+    pub fn is_calibrated(&self, id: TrackerId) -> bool {
+        self.trackers.get(&id).is_some_and(|t| t.reset_count > 0)
+    }
+
+    pub fn has_drift_sample(&self, id: TrackerId) -> bool {
+        self.trackers.get(&id).is_some_and(|t| t.drift.enabled && t.drift.drift_duration > 0.0)
     }
 }
 
@@ -255,8 +299,8 @@ fn q(w: f32, x: f32, y: f32, z: f32) -> UnitQuaternion<f32> {
 }
 
 /// The `defaultMounting()` orientation for a `TrackerPosition` id — the standard
-/// SlimeVR `defaultMounting()` port. (HaritoraX→SlimeVR frame translation is done
-/// by the bridge/Shora, not the server.)
+/// SlimeVR `defaultMounting()` port. The serial/UDP input boundary converts
+/// the IMU world frame before these tracker-local mounting offsets are applied.
 pub fn default_mounting(position: u8) -> UnitQuaternion<f32> {
     match position {
         // LEFT_LOWER_ARM, LEFT_HAND, left fingers → LEFT (90° yaw)
@@ -314,6 +358,79 @@ fn quat_pow(q: &UnitQuaternion<f32>, t: f32) -> UnitQuaternion<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mounting_reset_does_not_learn_pose_change_as_yaw_drift() {
+        let mut tracker = TrackerCalibration::default();
+        tracker.drift.configure(true, 0.5);
+        tracker.full_reset(UnitQuaternion::identity(), UnitQuaternion::identity());
+        tracker.drift.since = Some(Instant::now() - std::time::Duration::from_secs(30));
+        tracker.yaw_reset(yaw_quat(0.1), UnitQuaternion::identity());
+        let before = (tracker.drift.drift_quat, tracker.drift.drift_duration, tracker.drift.since);
+        let ski = yaw_quat(0.1) * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -0.6);
+        tracker.mounting_reset(ski, UnitQuaternion::identity(), 4);
+        assert_eq!(tracker.drift.drift_quat, before.0);
+        assert_eq!(tracker.drift.drift_duration, before.1);
+        assert_eq!(tracker.drift.since, before.2);
+    }
+
+    #[test]
+    fn drift_options_apply_to_existing_and_future_trackers_and_clear_history() {
+        let mut calibration = Calibration::new();
+        let existing = TrackerId::new([1; 6], 0);
+        let future = TrackerId::new([2; 6], 0);
+        calibration.set_mounting(existing, 4);
+        calibration.configure_drift(true, 0.75);
+        calibration.set_mounting(future, 9);
+        for id in [existing, future] {
+            let tracker = calibration.tracker_mut(id);
+            assert!(tracker.drift.enabled);
+            assert_eq!(tracker.drift.amount, 0.75);
+            tracker.full_reset(UnitQuaternion::identity(), UnitQuaternion::identity());
+            tracker.drift.since = Some(Instant::now() - std::time::Duration::from_secs(2));
+            tracker.yaw_reset(yaw_quat(0.3), UnitQuaternion::identity());
+            assert!(calibration.has_drift_sample(id));
+            assert!(calibration.is_calibrated(id));
+        }
+        calibration.clear_drift();
+        assert!(!calibration.has_drift_sample(existing));
+        assert!(calibration.is_calibrated(existing));
+        calibration.configure_drift(false, 0.25);
+        assert!(!calibration.tracker_mut(future).drift.enabled);
+    }
+
+    #[test]
+    fn yaw_drift_uses_completed_correction_even_while_reset_is_easing() {
+        let mut tracker = TrackerCalibration::default();
+        tracker.mounting_orientation = UnitQuaternion::identity();
+        tracker.drift.configure(true, 1.0);
+        tracker.full_reset(UnitQuaternion::identity(), UnitQuaternion::identity());
+        tracker.drift.since = Some(Instant::now() - std::time::Duration::from_secs(2));
+        tracker.yaw_reset(yaw_quat(0.3), UnitQuaternion::identity());
+        assert!((yaw_of(&tracker.drift.drift_quat) + 0.3).abs() < 1e-4);
+        tracker.drift.since = Some(Instant::now() - std::time::Duration::from_secs(3));
+        let corrected = tracker.drift.apply(yaw_quat(0.3));
+        assert!(corrected.angle() < 1e-4);
+        tracker.drift.configure(true, 0.5);
+        assert!((yaw_of(&tracker.drift.apply(yaw_quat(0.3))) - 0.15).abs() < 1e-4);
+        tracker.drift.configure(false, 0.5);
+        assert!((yaw_of(&tracker.drift.apply(yaw_quat(0.3))) - 0.3).abs() < 1e-4);
+    }
+
+    #[test]
+    fn extension_calibration_does_not_change_primary_sensor() {
+        let primary = TrackerId::new([1; 6], 0);
+        let extension = TrackerId::new([1; 6], 1);
+        let raw = yaw_quat(0.3);
+        let mut calib = Calibration::new();
+        calib.set_mounting(primary, 9);
+        let before = calib.adjust(primary, raw);
+        calib.set_mounting(extension, 10);
+        calib.tracker_mut(extension).full_reset(raw, UnitQuaternion::identity());
+        assert!(calib.adjust(primary, raw).angle_to(&before) < 1e-5);
+        assert!(calib.adjust(extension, raw).angle() < 1e-5);
+        assert!(before.angle() > 0.1);
+    }
 
     fn yaw_close(a: &UnitQuaternion<f32>, b: &UnitQuaternion<f32>, eps: f32) -> bool {
         (yaw_of(a) - yaw_of(b)).abs() < eps

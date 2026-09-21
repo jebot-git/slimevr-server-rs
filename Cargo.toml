@@ -2,6 +2,7 @@
 name = "slimevr-server-rs"
 version = "0.1.0"
 edition = "2021"
+default-run = "slimevr-server-rs"
 description = "A from-scratch Rust rewrite of the SlimeVR full-body tracking server"
 license = "MIT OR Apache-2.0"
 
@@ -28,7 +29,7 @@ tokio = { version = "1", features = ["full"] }
 
 # ── CLI + config ──────────────────────────────────────────────────────────────
 clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 toml = "0.8"
 
 # ── SteamVR feeder protocol (protobuf over the SlimeVRInput socket) ────────────
@@ -41,6 +42,26 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 socket2 = { version = "0.5", features = ["all"] }
 # nalgebra 0.32 to interoperate with `vqf`'s quaternion/vector types.
 nalgebra = "0.32"
+
+# oscavmgr face/eye pipeline (ported from Shora).
+rosc = "0.10"
+serde_json = "1"
+glam = { version = "0.30", features = ["mint"] }
+mint = "0.5"
+strum = { version = "0.27", features = ["derive"] }
+mdns-sd = "0.20"
+openxr = { git = "https://github.com/galister/openxrs", rev = "17642d0ccac65dbf7e24da84db56cc500592afff", default-features = false, features = ["linked", "mint"], optional = true }
+
+# Native HaritoraX interpreter and Shora terminal frontend.
+base64 = "0.22"
+serialport = "4"
+ratatui = "0.28"
+crossterm = "0.28"
+libc = "0.2"
+
+[features]
+default = []
+face-xr = ["dep:openxr"]
 
 [build-dependencies]
 prost-build = "0.12"

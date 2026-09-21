@@ -1,0 +1,35 @@
+{
+  "id": "avtr_example",
+  "name": "Example VRChat face output translation",
+  "parameters": [
+    {
+      "name": "FT/v2/JawOpen",
+      "input": { "address": "/avatar/parameters/CustomMouthOpen", "type": "Float" },
+      "output": { "address": "/feedback/mouth", "type": "Float" }
+    },
+    {
+      "name": "FT/v2/EyeLidLeft",
+      "input": { "address": "/avatar/parameters/CustomLeftLid", "type": "Float" }
+    },
+    {
+      "name": "FT/v2/JawXNegative",
+      "input": { "address": "/avatar/parameters/JawSign", "type": "Bool" }
+    },
+    {
+      "name": "FT/v2/JawX1",
+      "input": { "address": "/avatar/parameters/JawBit0", "type": "Bool" }
+    },
+    {
+      "name": "FT/v2/JawX2",
+      "input": { "address": "/avatar/parameters/JawBit1", "type": "Bool" }
+    },
+    {
+      "name": "ExpressionTrackingActive",
+      "input": { "address": "/avatar/parameters/CustomTrackingActive", "type": "Bool" }
+    },
+    {
+      "name": "EyeTrackingActive",
+      "input": { "address": "/avatar/parameters/CustomEyeTrackingActive", "type": "Bool" }
+    }
+  ]
+}

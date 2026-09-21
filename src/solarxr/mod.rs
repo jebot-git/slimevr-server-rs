@@ -61,7 +61,7 @@ pub async fn run(
     hmd: Arc<RwLock<Option<HmdPose>>>,
     lengths: Arc<RwLock<BoneMap<f32>>>,
     autobone: Arc<RwLock<autobone::AutoboneState>>,
-    target_height: f32,
+    target_height: Arc<RwLock<f32>>,
 ) -> anyhow::Result<()> {
     let listener = bind_unix_socket(&path).await?;
     tracing::info!("SolarXR IPC socket listening on {path}");
@@ -75,6 +75,7 @@ pub async fn run(
         let hmd = hmd.clone();
         let lengths = lengths.clone();
         let autobone = autobone.clone();
+        let target_height = target_height.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_connection(
                 stream,
@@ -121,7 +122,7 @@ async fn handle_connection(
     hmd: Arc<RwLock<Option<HmdPose>>>,
     lengths: Arc<RwLock<BoneMap<f32>>>,
     autobone: Arc<RwLock<autobone::AutoboneState>>,
-    target_height: f32,
+    target_height: Arc<RwLock<f32>>,
 ) -> anyhow::Result<()> {
     let (mut read, mut write) = stream.into_split();
 
@@ -199,12 +200,13 @@ async fn handle_connection(
                                             RpcMessage::AutoBoneProcessRequest => {
                                                 if let Some(req) = h.message_as_auto_bone_process_request() {
                                                     tracing::info!("RPC AutoBoneProcessRequest");
+                                                    let height = *target_height.read().unwrap();
                                                     if let Some(bytes) = handle_autobone_request(
                                                         req,
                                                         &autobone,
                                                         &lengths,
                                                         &calib,
-                                                        target_height,
+                                                        height,
                                                     ) {
                                                         let _ = write_message(&mut write, &bytes).await;
                                                     }
@@ -273,7 +275,7 @@ async fn write_message<W: AsyncWrite + Unpin>(w: &mut W, body: &[u8]) -> io::Res
 /// The computed 6-DoF trackers we emit as emulated Vive trackers:
 /// `(tracker body part, source bone body part, use tail joint)`.
 const COMPUTED_TRACKERS: &[(u8, u8, bool)] = &[
-    (1, 2, false),  // HEAD ← Neck head (root at origin)
+    (1, 2, false),  // HEAD ← Neck head (root anchored at the HMD)
     (3, 3, false),  // CHEST ← Chest head
     (5, 5, true),   // HIP ← Hip tail
     (8, 6, true),   // LEFT_LOWER_LEG (knee) ← ThighL tail
@@ -633,6 +635,35 @@ fn build_autobone_status_response(ptype: AutoBoneProcessType) -> Vec<u8> {
 mod tests {
     use super::*;
     use nalgebra::UnitQuaternion;
+
+    #[test]
+    fn hmd_root_translation_reaches_bones_and_synthetic_trackers() {
+        let rotation = UnitQuaternion::from_euler_angles(0.2, 0.7, -0.1);
+        let origin = [0.0, 0.0, 0.0, rotation.i, rotation.j, rotation.k, rotation.w];
+        let translated = [1.3, 1.65, -2.1, rotation.i, rotation.j, rotation.k, rotation.w];
+        let solve = |hmd: &HmdPose| crate::skeleton::solve_pose(std::iter::empty(), &Calibration::new(), 1.8, Some(hmd));
+        let reference = solve(&origin);
+        let pose = solve(&translated);
+        assert_eq!(pose[&2].head_pos, translated[..3]);
+        for (&part, bone) in &pose {
+            for axis in 0..3 {
+                assert!((bone.head_pos[axis] - reference[&part].head_pos[axis] - translated[axis]).abs() < 1e-5);
+            }
+        }
+        let bytes = build_bone_feed(&pose).unwrap();
+        let bundle = flatbuffers::root::<MessageBundle>(&bytes).unwrap();
+        let update = bundle.data_feed_msgs().unwrap().get(0).message_as_data_feed_update().unwrap();
+        for bone in update.bones().unwrap() {
+            let position = bone.head_position_g().unwrap();
+            assert_eq!([position.x(), position.y(), position.z()], pose[&bone.body_part().0].head_pos);
+        }
+        for (i, tracker) in update.synthetic_trackers().unwrap().iter().enumerate() {
+            let (_, part, tail) = COMPUTED_TRACKERS[i];
+            let expected = if tail { bone_tail_pos(&pose[&part]) } else { pose[&part].head_pos };
+            let position = tracker.position().unwrap();
+            assert_eq!([position.x(), position.y(), position.z()], expected);
+        }
+    }
 
     #[test]
     fn bone_feed_round_trips() {

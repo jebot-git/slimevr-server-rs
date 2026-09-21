@@ -157,6 +157,12 @@ impl BoneKind {
 	pub fn calibration_rotation(self) -> Global<UnitQuat> {
 		use BoneKind::*;
 		Global(match self {
+			// The solver places children along rotated -Y. These connector bones
+			// must run sideways so left/right limbs have distinct attachment points.
+			ShoulderL | HipL => UnitQuat::from_axis_angle(
+				&nalgebra::Vector3::z_axis(), -std::f32::consts::FRAC_PI_2),
+			ShoulderR | HipR => UnitQuat::from_axis_angle(
+				&nalgebra::Vector3::z_axis(), std::f32::consts::FRAC_PI_2),
 			FootL | FootR => UnitQuat::look_at_rh(&-up_vec(), &forward_vec()),
 			_ => UnitQuat::default(),
 		})

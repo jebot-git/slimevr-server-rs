@@ -136,6 +136,7 @@ mod tests {
     fn tracker(position: u8, rot: Option<UnitQuaternion<f32>>) -> Tracker {
         Tracker {
             sensor_id: 0,
+            status: crate::tracker::SensorStatus::Ok,
             addr: "127.0.0.1:1".parse().unwrap(),
             mac: [position; 6],
             position,

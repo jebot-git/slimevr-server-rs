@@ -10,6 +10,7 @@ message ProtobufMessage {
   oneof message {
     Position position = 1;
     TrackerAdded tracker_added = 3;
+    TrackerStatus tracker_status = 4;
     PingPong ping_pong = 6;
     Version version = 7;
   }
@@ -40,6 +41,11 @@ message TrackerAdded {
 
 message PingPong {
   int32 ping_id = 1;
+}
+
+message TrackerStatus {
+  int32 tracker_id = 1;
+  int32 status = 2;
 }
 
 message Version {

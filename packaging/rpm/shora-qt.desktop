@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Shora Tracking
+Comment=Skeleton preview, calibration and tracking settings
+Exec=shora-qt --attach
+Icon=preferences-desktop-peripherals
+Terminal=false
+Categories=Utility;Qt;
+Keywords=VR;SlimeVR;HaritoraX;WiVRn;

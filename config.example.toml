@@ -1,0 +1,53 @@
+# Copy this file and adjust height and assignments for your trackers.
+tracker_port = 6969
+height_m = 1.80
+ping_interval_secs = 2
+tracker_timeout_secs = 5
+smoothing = 0.3
+prediction = 0.0
+drift_correction = false
+drift_amount = 0.5
+ui = "headless"                       # "tui" reuses Shora's terminal interface
+# log_file = "/tmp/shora-rust.log"     # automatic when using the TUI
+
+# Socket defaults follow XDG_RUNTIME_DIR; explicit paths can be set here.
+# solarxr_socket = "/run/user/1000/SlimeVRRpc"
+# feeder_socket = "/run/user/1000/SlimeVRInput"
+# With shora-proxy owning the public sockets, use these backend paths instead:
+# solarxr_socket = "/run/user/1000/SlimeVRRpc.backend"
+# feeder_socket = "/run/user/1000/SlimeVRInput.backend"
+# control_socket = "/run/user/1000/SlimeVRControl" # optional; needed to attach Qt
+
+# Omitting sensor_id targets the primary sensor (0).
+# [[tracker_assignments]]
+# mac = "AA:BB:CC:DD:EE:FF"
+# position = 9
+
+# Extension sensor on the same device.
+# [[tracker_assignments]]
+# mac = "AA:BB:CC:DD:EE:FF"
+# sensor_id = 1
+# position = 10
+
+# Native SlimeTora / haritorax-interpreter serial input (no Node bridge needed).
+[haritorax]
+enabled = false
+model = "x2"                         # "x2" (dual leg frames) or "wireless"
+ports = []                           # empty = detect GX6/GX2 USB ports
+# ports = ["/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyACM2"]
+baud_rate = 500000
+
+# Embedded oscavmgr face/eye → OSC pipeline (disabled by default).
+# --face-source babble or --face-source openxr enables it from the CLI.
+[face]
+enabled = false
+source = "babble"                    # "openxr" requires --features face-xr
+babble_port = 9400                    # Project Babble + EyeTrackVR input
+osc_port = 9002                       # VRChat feedback / optional VSync input
+destination = "127.0.0.1:9000"         # VRChat / compatible OSC receiver
+expose = false                       # true binds input on all IPv4 interfaces
+osc_query = true                     # local OSCQuery advertisement + avatar discovery
+output = "auto"                      # "auto", "unift", "json", or "both"
+# translation_sheet = "examples/face/avatar-osc.json" # VRChat parameters[].input mappings
+# json/both require translation_sheet; auto uses a supplied sheet before discovery.
+# avatar = "/path/to/avatar-tree.json" # OSCQuery /avatar tree; overrides discovery

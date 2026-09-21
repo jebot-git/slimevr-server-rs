@@ -9,7 +9,7 @@ dependency chain: nothing above an item can be finished without the items below 
 - [x] Project scaffold with SlimeVR-Rust git deps (`firmware_protocol`, `skeletal_model`, `vqf`).
 - [x] Tracker UDP protocol server (`tracker/udp.rs`): handshake → `"Hey OVR =D 5"`,
       ping, rotation, acceleration, sensor-info (raw `tracker_position` parse).
-- [x] `TrackerRegistry` keyed by MAC.
+- [x] `TrackerRegistry` keyed by device MAC + sensor ID.
 - [x] `skeletal_model::Skeleton` graph construction (zero bone lengths).
 - [x] Passthrough pose estimation: `TrackerPosition` → SolarXR `BodyPart` + rotation.
 - [x] **SolarXR IPC server** (`src/solarxr/`) over a **Unix domain socket**
@@ -72,21 +72,23 @@ dependency chain: nothing above an item can be finished without the items below 
 - [~] **RPC surface.** Reset RPC is handled over SolarXR (`ResetRequest` →
       full/yaw/mounting reset + `ResetResponse`). Assignment, status, settings,
       serial, and autobone RPCs are still TODO.
-- [~] **Tracker management.** SENSOR_INFO sensor-id/position handling, manual
-      per-MAC assignment, and disconnect/timeout cleanup (configurable
-      `tracker_timeout_secs`) are in; pings go out on the tracker socket so
-      trackers answer with `Pong` and stay alive. Multi-sensor trackers and
-      SENSOR_INFO status handling are still TODO.
+- [x] **Multi-sensor tracker management.** Independent state, calibration, and
+      filtering per MAC + sensor ID; per-sensor manual assignments; repeated and
+      legacy SENSOR_INFO packets; six-byte acknowledgements; disconnected/error
+      status clears samples until an OK announcement. Reconnects migrate all
+      sensor routes and remove the old address. Pings are sent once per device,
+      heartbeat/pong refreshes all sensors, and timeout eviction cleans routes.
+      Covered by registry regressions and a loopback UDP → FK test.
 
 ## Ops & ergonomics
 
 - [~] Config file + CLI. TOML config file + `--tracker-port`/`--solarxr-socket`/
       `--feeder-socket`/`--ping-interval-secs`/`--tracker-timeout-secs`/`--height-m`/
-      `--assign MAC=POSITION` flags (precedence: defaults → file → CLI).
+      `--assign MAC[/SENSOR]=POSITION` flags (precedence: defaults → file → CLI).
 - [x] Tracker body-part assignment (auto + manual). Auto reads SENSOR_INFO
-      `tracker_position`; manual overrides it per-MAC via config/`--assign`,
+      `tracker_position`; manual overrides it per MAC + sensor ID via config/`--assign`,
       matching the Java server's `vrconfig.yml` assignment.
-- [ ] Skeleton/pose logging or a lightweight debug UI.
+- [x] Shora ratatui status/control UI and file logging; native Qt6/PySide6 frontend.
 - [~] Parity testing against the Java server — `examples/solarxr_dump` +
       `examples/tracker_emulate` built. **End-to-end live test succeeded**: the Rust
       server swapped in for Java, 6 live HaritoraX trackers connect, and WiVRn
@@ -100,3 +102,46 @@ dependency chain: nothing above an item can be finished without the items below 
       Also fixed in shora: an `XrState` drop-order segfault on WiVRn restart.
 - [ ] Remove the vendored `solarxr_protocol` in favour of the upstream git dep once
       the version is pinned.
+
+## Face/eye integration (oscavmgr)
+
+- [x] Embedded face/eye → OSC pipeline adapted from Shora, opt-in via `[face]`
+      config or `--face-source babble|openxr`.
+- [x] Babble/EyeTrackVR messages and bundles; unified/combined expressions,
+      float/sign/bit avatar mappings, VSync watchdog, stale-data reset.
+- [x] Local OSCQuery advertisement and IPv4 VRChat avatar discovery; static
+      OSCQuery `/avatar` mappings can override discovery.
+- [x] Fixed UniFT output for supported unified/combined expressions and VRChat
+      avatar OSC JSON translation sheets (`input.address`/`input.type`), selectable
+      separately or together from CLI, TOML, and Qt. Float/bool/int routes,
+      signed binary channels, remapped activity flags, avatar-change resends,
+      and stale/shutdown clearing are covered by mapping and UDP loopback tests.
+- [x] Optional `face-xr` build with pinned OpenXR dependency for the Meta path.
+- [x] Managed worker shutdown, startup errors, and body-service supervision.
+- [x] Loopback input → output tests, mapping/config regressions, default and
+      OpenXR feature builds.
+- [ ] Validate headset sampling, OSCQuery discovery, and avatar behavior with
+      a live WiVRn/VRChat setup. Full oscavmgr utilities are outside this port.
+
+## HaritoraX and unified Shora interfaces
+
+- [x] Reuse Shora's Rust HaritoraX interpreter and SlimeTora-compatible IDs.
+- [x] GX6/GX2 discovery, configurable ports, HaritoraX 2 dual leg and Wireless
+      serial decoding, battery/button reports, automatic port reconnect.
+- [x] Direct native registry/calibration/FK integration with assignment overrides.
+- [x] Managed serial workers, bounded input buffers/queues, joined shutdown.
+- [x] Shared status and calibration/pause/reconnect commands for TUI and Qt.
+- [x] Owner-only local JSON control socket with bounded requests and client count.
+- [x] Native Qt6 Widgets frontend: launch/attach, live trackers/serial/face/HMD
+      status, logs, controls, and owned-process shutdown.
+- [x] Qt skeleton preview from authoritative solved endpoints, orbit/zoom/views,
+      calibration countdown and cancellation, live height/smoothing/prediction/
+      drift settings, learned-drift clearing, and tuning-profile export.
+- [x] Lateral shoulder/hip rest-pose offsets, so inferred limbs do not overlap.
+- [x] Drift settings propagate to existing/new trackers; yaw-drift learning uses
+      the completed reset correction independently of its one-second easing.
+- [x] Decoder regressions, simulated serial/control smoke test, TUI terminal
+      restoration test, and Qt lifecycle smoke test.
+- [ ] Validate native serial acquisition with physical GX6/GX2 dongles.
+- [ ] BLE, legacy wired hardware, pairing/channel configuration and firmware UI.
+- [ ] Persist calibration offsets and expose editable tracker assignments in the UIs.

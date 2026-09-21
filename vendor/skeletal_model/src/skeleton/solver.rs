@@ -36,6 +36,10 @@ impl Skeleton {
 		let mut visited_edges = HashSet::with_capacity(self.graph.edge_count());
 		let mut visited_nodes = HashSet::with_capacity(self.graph.node_count());
 		for &(n, _) in &queue {
+			// Root nodes are already visited, so do_fk never writes them. Seed
+			// their output from the positional constraint on every solve before
+			// descendants use it (including a moving HMD root).
+			self.graph[n].output_pos_g = Global(self.graph[n].input_pos_g.as_ref().unwrap().0);
 			visited_nodes.insert(n);
 		}
 
@@ -126,6 +130,35 @@ mod tests {
 		assert_relative_eq!(s.bone_output_pos(BoneKind::Chest), Point::new(0.0, -3.0, 0.0));
 		assert_relative_eq!(s.bone_output_pos(BoneKind::Waist), Point::new(0.0, -4.0, 0.0));
 		assert_relative_eq!(s.bone_output_pos(BoneKind::Hip), Point::new(0.0, -5.0, 0.0));
+	}
+
+	#[test]
+	fn hmd_root_translation_moves_every_joint_on_each_solve() {
+		let mut s = Skeleton::new(&SkeletonConfig::new(BoneMap::new([1.0; BoneKind::NUM_TYPES])));
+		s.solve().unwrap();
+		let rest: Vec<_> = BoneKind::iter().map(|bone| (bone, s.bone_head_pos(bone), s.bone_output_pos(bone))).collect();
+		for anchor in [Point::new(2.0, 1.7, -3.0), Point::new(-0.5, 1.2, 4.0)] {
+			s.set_root_position(anchor);
+			s.solve().unwrap();
+			for &(bone, head, tail) in &rest {
+				assert_relative_eq!(s.bone_head_pos(bone), head + anchor.coords, epsilon = 1e-5);
+				assert_relative_eq!(s.bone_output_pos(bone), tail + anchor.coords, epsilon = 1e-5);
+			}
+		}
+	}
+
+	#[test]
+	fn rest_pose_separates_shoulders_and_hips_without_tilting_limbs() {
+		let mut s = Skeleton::new(&SkeletonConfig::new(BoneMap::new([1.0; BoneKind::NUM_TYPES])));
+		s.solve().unwrap();
+		assert_relative_eq!(s.bone_output_pos(BoneKind::ShoulderL), Point::new(-1.0, -2.0, 0.0), epsilon = 1e-5);
+		assert_relative_eq!(s.bone_output_pos(BoneKind::ShoulderR), Point::new(1.0, -2.0, 0.0), epsilon = 1e-5);
+		assert_relative_eq!(s.bone_output_pos(BoneKind::UpperArmL), Point::new(-1.0, -3.0, 0.0), epsilon = 1e-5);
+		assert_relative_eq!(s.bone_output_pos(BoneKind::UpperArmR), Point::new(1.0, -3.0, 0.0), epsilon = 1e-5);
+		assert_relative_eq!(s.bone_output_pos(BoneKind::HipL), Point::new(-1.0, -5.0, 0.0), epsilon = 1e-5);
+		assert_relative_eq!(s.bone_output_pos(BoneKind::HipR), Point::new(1.0, -5.0, 0.0), epsilon = 1e-5);
+		assert_relative_eq!(s.bone_output_pos(BoneKind::ThighL), Point::new(-1.0, -6.0, 0.0), epsilon = 1e-5);
+		assert_relative_eq!(s.bone_output_pos(BoneKind::ThighR), Point::new(1.0, -6.0, 0.0), epsilon = 1e-5);
 	}
 
 	/// A pinned chest rotation propagates to the untracked descendants.

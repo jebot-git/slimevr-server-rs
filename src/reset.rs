@@ -24,10 +24,10 @@ pub fn handle_user_action(
             for t in registry.iter() {
                 let Some(raw) = t.rotation else { continue };
                 match action {
-                    ActionType::Reset => calib.tracker_mut(t.mac).full_reset(raw, reference),
-                    ActionType::ResetYaw => calib.tracker_mut(t.mac).yaw_reset(raw, reference),
+                    ActionType::Reset => calib.tracker_mut(t.id()).full_reset(raw, reference),
+                    ActionType::ResetYaw => calib.tracker_mut(t.id()).yaw_reset(raw, reference),
                     ActionType::ResetMounting => {
-                        calib.tracker_mut(t.mac).mounting_reset(raw, reference, t.position)
+                        calib.tracker_mut(t.id()).mounting_reset(raw, reference, t.position)
                     }
                     _ => unreachable!(),
                 }

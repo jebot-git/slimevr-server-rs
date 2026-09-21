@@ -1,0 +1,16 @@
+# Per-user copy: ~/.config/shora-rust/server.toml. Existing profiles are preserved.
+height_m = 1.80
+smoothing = 0.3
+prediction = 0.0
+drift_correction = false
+drift_amount = 0.5
+
+[haritorax]
+enabled = true
+model = "x2"
+ports = []
+
+[face]
+enabled = true
+source = "openxr"
+output = "auto"
